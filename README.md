@@ -1,11 +1,4 @@
-# Guidance Title (required)
-
-The Guidance title should be consistent with the title established first in Alchemy.
-
-**Example:** *Guidance for Product Substitutions on AWS*
-
-This title correlates exactly to the Guidance it’s linked to, including its corresponding sample code repository. 
-
+# Guidance for Scaling Electronic Design Automation (EDA) on AWS
 
 ## Table of Content (required)
 
@@ -14,6 +7,7 @@ List the top-level sections of the README template, along with a hyperlink to th
 ### Required
 
 1. [Overview](#overview-required)
+    - [Archiecture](#reference-architecture)
     - [Cost](#cost)
 2. [Prerequisites](#prerequisites-required)
     - [Operating System](#operating-system-required)
@@ -32,54 +26,69 @@ List the top-level sections of the README template, along with a hyperlink to th
 
 ## Overview (required)
 
-1. Provide a brief overview explaining the what, why, or how of your Guidance. You can answer any one of the following to help you write this:
+This Guidance demonstrates how to implement a cloud-bursting solution that seamlessly extends your on-premises semiconductor workflows to the cloud. It allows you to run hybrid or entirely cloud-based semiconductor design and verification workflows on AWS while utilizing your existing on-premises chip design environments based on IBM Spectrum Load Sharing Facility (LSF) and NetApp storage.
 
-    - **Why did you build this Guidance?**
-    - **What problem does this Guidance solve?**
+### Reference Architecture
+![Architecture Diagram](assets/images/Cloud-Scale-Architecture.png)
 
-2. Include the architecture diagram image, as well as the steps explaining the high-level overview and flow of the architecture. 
-    - To add a screenshot, create an ‘assets/images’ folder in your repository and upload your screenshot to it. Then, using the relative file path, add it to your README. 
 
-### Cost ( required )
+### Cost
 
-This section is for a high-level cost estimate. Think of a likely straightforward scenario with reasonable assumptions based on the problem the Guidance is trying to solve. Provide an in-depth cost breakdown table in this section below ( you should use AWS Pricing Calculator to generate cost breakdown ).
+You are responsible for the cost of the AWS services used while running this Guidance. As of month, the cost for running this Guidance with the default settings in the AWS Region(us-west-2) is approximately $1,556 per month for deploying EDA infrastrcuture(2 of IBM Spectrum LSF Primary Server, 2 of NICE DCV Login Server, 2 of FSx for Netapp ONTAP file system)
 
-Start this section with the following boilerplate text:
 
-_You are responsible for the cost of the AWS services used while running this Guidance. As of <month> <year>, the cost for running this Guidance with the default settings in the <Default AWS Region (Most likely will be US East (N. Virginia)) > is approximately $<n.nn> per month for processing ( <nnnnn> records )._
+### Sample Cost Table
 
-Replace this amount with the approximate cost for running your Guidance in the default Region. This estimate should be per month and for processing/serving resonable number of requests/entities.
 
-Suggest you keep this boilerplate text:
-_We recommend creating a [Budget](https://docs.aws.amazon.com/cost-management/latest/userguide/budgets-managing-costs.html) through [AWS Cost Explorer](https://aws.amazon.com/aws-cost-management/aws-cost-explorer/) to help manage costs. Prices are subject to change. For full details, refer to the pricing webpage for each AWS service used in this Guidance._
-
-### Sample Cost Table ( required )
-
-**Note : Once you have created a sample cost table using AWS Pricing Calculator, copy the cost breakdown to below table and upload a PDF of the cost estimation on BuilderSpace.**
-
-The following table provides a sample cost breakdown for deploying this Guidance with the default parameters in the US East (N. Virginia) Region for one month.
+The following table provides a sample cost breakdown for deploying this Guidance with the default parameters in the US West (Orego) Region for one month.
 
 | AWS service  | Dimensions | Cost [USD] |
 | ----------- | ------------ | ------------ |
-| Amazon API Gateway | 1,000,000 REST API calls per month  | $ 3.50month |
-| Amazon Cognito | 1,000 active users per month without advanced security feature | $ 0.00 |
+| Amazon EC2(m5.2xlarge) | IBM Specturm LSF Primary servers(2)  | $560.64 month |
+| Amazon EC2(m5.xlarge) | NICE DCV Login servers(2) | $280.32month |
+| FSx for Netapp ONTAP | 2 File Systems |  $638.76month |
+| Transit Gateway| Peering two VPC | $77.00month |
 
-## Prerequisites (required)
+## Prerequisites
+The following is requred to run this guidance.
 
-### Operating System (required)
+1. An AWS account with administrativie level access
+2. License/Full Linux(x86 and aarch64) distribution packages for IBM Spectrum LSF 10.1
+3. A free subscription to the [Official CentOS 7 x86_64 HVM AMI](https://aws.amazon.com/marketplace/pp/B00O7WM7QW)
+4. Amazon EC2 Key Pair
 
-- Talk about the base Operating System (OS) and environment that can be used to run or deploy this Guidance, such as *Mac, Linux, or Windows*. Include all installable packages or modules required for the deployment. 
-- By default, assume Amazon Linux 2/Amazon Linux 2023 AMI as the base environment. All packages that are not available by default in AMI must be listed out.  Include the specific version number of the package or module.
+### Operating System 
+This guidance based on two linux system(CentOS 7 and Amazon Linux 2)for deploying the EDA environment.
 
-**Example:**
-“These deployment instructions are optimized to best work on **<Amazon Linux 2 AMI>**.  Deployment in another OS may require additional steps.”
+#### 1. Obtain IBM Spectrum LSF Software
 
-- Include install commands for packages, if applicable.
+The IBM Spectrum LSF software is not provided in this workshop; you will need to download LSF 10.1 Fix Pack 8 or later and an associated entitlement file from your IBM Passport Advantage portal to complete this tutorial. See the details [Third-part tools](#third-party-tools)
+
+#### 2. Download NICE DCV Remote Desktop Client
+
+**NICE DCV** is a license-free, high-performance remote display protocol that you'll use for logging into the login server's desktop environment. Download and install the [NICE DCV remote desktop native client](https://download.nice-dcv.com/) on the computer you will be using for this workshop.
+
+#### 3. Prepare AWS Account
+
+If you don’t already have an AWS account, create one at [aws.amazon.com](https://aws.amazon.com/) by following the on-screen instructions. Part of the sign-up process involves receiving a phone call and entering a PIN using the phone keypad. Your AWS account is automatically signed up for all AWS services. You are charged only for the services you use.
+s
+Before you launch this tutorial, your account must be configured as specified below. Otherwise, the deployment might fail.
+
+Sign in to your AWS account at [https://aws.amazon.com/](https://aws.amazon.com) with an IAM user role that includes full administrative permissions.
 
 
-### Third-party tools (If applicable)
 
-*List any installable third-party tools required for deployment.*
+### Third-party tools
+Download the following packages from IBM:
+
+| **Kind**          | **IBM Download Source** | **Description** | **Package Name**                                   |
+| ----------------- | ----------------------- | --------------- | -------------------------------------------------- |
+| Install Script    | Passport Advantage      | \--             | lsf10.1_lsfinstall_linux_x86_64.tar.Z              |
+| Base Distribution(x86) | Passport Advantage | \--             | lsf10.1_linux2.6-glibc2.3-x86_64.tar.Z             |
+| Base Distribution(arm64) | Passport Advantage | \--           | lsf10.1_lnx312-lib217-armv8.tar.Z                  |
+| Entitlement File  | Passport Advantage      | \--             | lsf_std_entitlement.dat or lsf_adv_entitlement.dat |
+| Fix Pack(x86)     | Passport Advantage      | \--             | lsf10.1_linux2.6-glibc2.3-x86_64-601547.tar.Z      |
+| Fix Pack(arm64)   | Passport Advantage      | \--             | lsf10.1_lnx312-lib217-armv8-601547.tar.Z           |
 
 
 ### AWS account requirements (If applicable)
