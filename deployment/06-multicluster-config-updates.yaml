@@ -1,0 +1,245 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: |
+  This CloudFormation deploys a temporary server, updates the configuration and 
+  then shuts off the instance. 
+
+Metadata:
+  License:
+    Description: |
+      Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+
+      Permission is hereby granted, free of charge, to any person obtaining a copy of
+      this software and associated documentation files (the "Software"), to deal in
+      the Software without restriction, including without limitation the rights to
+      use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+      the Software, and to permit persons to whom the Software is furnished to do so.
+
+      THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+      IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+      FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+      COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+      IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+      CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.'
+
+Parameters:
+  SendClusterName:
+    Description: An environment name that will be prefixed to resource names
+    Type: String
+  RcvClusterName:
+    Description: Name of Cloud Environment in MultiCluster Mode
+    Type: String
+  LSFInstallPath:
+    Description: "From NFS template. Shared NFS file system for installing LSF. Derive this from an Export or Parameter Store key."
+    Type: "String"
+    Default: "/tools/ibm/lsf"
+  SourceS3Bucket:
+    Default: "cloudscale-deployment-bucket-123"
+    Description: url prefix for the bucket that has all the files for deploying this prototype. 
+    Type: String
+
+Resources:
+
+  # IAM Role
+  LambdaRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: "sts:AssumeRole"
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AmazonElasticFileSystemFullAccess
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+
+    # Update Sender Config
+  UpdateSenderConfigFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          import os
+          import boto3
+          import json
+
+          SENDER_CLUSTER_MASTER_IP = os.getenv('SENDER_CLUSTER_MASTER_IP')
+          RECEIVER_CLUSTER_MASTER_IP = os.getenv('RECEIVER_CLUSTER_MASTER_IP')
+          SENDER_CLUSTER_NAME = os.getenv('SENDER_CLUSTER_NAME')
+          RECEIVER_CLUSTER_NAME = os.getenv('RECEIVER_CLUSTER_NAME')
+          SENDER_CLUSTER_INDEX = os.getenv('SENDER_CLUSTER_INDEX')
+          RECEIVER_CLUSTER_INDEX = os.getenv('RECEIVER_CLUSTER_INDEX')
+
+          LSF_CONFIG_BUCKET = os.getenv('LSF_CONFIG_BUCKET')
+
+          LSB_QUEUES_PATH = '/mnt/tools/ibm/lsf/{}/conf/lsbatch/{}/configdir/lsb.queues'.format(SENDER_CLUSTER_NAME,SENDER_CLUSTER_NAME)
+          LSF_SHARED_PATH = '/mnt/tools/ibm/lsf/{}/conf/lsf.shared'.format(SENDER_CLUSTER_NAME)
+
+          s3_client = boto3.client('s3')
+
+          def lambda_handler(event, context):
+            print('Received event: ' + json.dumps(event))
+
+            if 'Delete' in event['RequestType']:
+              response=cfnresponse.send(event, context, 'SUCCESS', {})
+              
+            responseData = {}
+            status = 'FAILED'
+            try:
+              lsb_queues_obj = s3_client.get_object(Bucket=LSF_CONFIG_BUCKET, Key='eda-workshop-cloud-scale/source/config/multicluster/lsb.queues.snd')
+              lsb_queues_content = lsb_queues_obj['Body'].read().decode('utf-8') 
+              lsb_queues_content = lsb_queues_content.replace('_OTHER_CLUSTER_NAME_',RECEIVER_CLUSTER_NAME)
+              
+              lsb_queues_file = open(LSB_QUEUES_PATH, "w")
+              lsb_queues_file.write(lsb_queues_content)
+              lsb_queues_file.close()
+              
+              lsf_shared_obj = s3_client.get_object(Bucket=LSF_CONFIG_BUCKET, Key='eda-workshop-cloud-scale/source/config/multicluster/lsf.shared.multicluster')
+              lsf_shared_content = lsf_shared_obj['Body'].read().decode('utf-8') 
+              lsf_shared_content = lsf_shared_content.replace('_THIS_CLUSTER_NAME_',SENDER_CLUSTER_NAME)
+              lsf_shared_content = lsf_shared_content.replace('_OTHER_CLUSTER_NAME_',RECEIVER_CLUSTER_NAME)
+              lsf_shared_content = lsf_shared_content.replace('_THIS_CLUSTER_LSF_MASTER_IP_',SENDER_CLUSTER_MASTER_IP)
+              lsf_shared_content = lsf_shared_content.replace('_OTHER_CLUSTER_LSF_MASTER_IP_',RECEIVER_CLUSTER_MASTER_IP)
+              lsf_shared_content = lsf_shared_content.replace('_THIS_CLUSTER_INDEX_',SENDER_CLUSTER_INDEX)
+              lsf_shared_content = lsf_shared_content.replace('_OTHER_CLUSTER_INDEX_',RECEIVER_CLUSTER_INDEX)
+              
+              lsf_shared_file = open(LSF_SHARED_PATH, "w")
+              lsf_shared_file.write(lsf_shared_content)
+              lsf_shared_file.close()
+              status = 'SUCCESS'
+            except Exception as e:
+              status = 'FAILED'
+              responseData['error'] = str(e)
+            response=cfnresponse.send(event, context, status, responseData)      
+      Runtime: python3.8
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaRole.Arn
+      ReservedConcurrentExecutions: 5
+      Timeout: 10
+      MemorySize: 512
+      FileSystemConfigs:
+        - LocalMountPath: "/mnt/tools"
+          Arn:
+            Fn::ImportValue: !Join [ '-', [ !Ref SendClusterName,"LSFEFSAccessPointArn" ] ] 
+      Environment: 
+        Variables:
+          SENDER_CLUSTER_MASTER_IP:
+            Fn::ImportValue: !Join [ '-', [ !Ref SendClusterName,"LSFMasterPrivateIP" ] ] 
+          RECEIVER_CLUSTER_MASTER_IP:
+            Fn::ImportValue: !Join [ '-', [ !Ref RcvClusterName,"LSFMasterPrivateIP" ] ]
+          LSF_INSTALL_PATH: !Ref LSFInstallPath
+          SENDER_CLUSTER_NAME: !Ref SendClusterName
+          RECEIVER_CLUSTER_NAME: !Ref RcvClusterName
+          LSF_CONFIG_BUCKET: !Ref SourceS3Bucket
+          SENDER_CLUSTER_INDEX: "1"
+          RECEIVER_CLUSTER_INDEX: "2"
+      VpcConfig: 
+        SecurityGroupIds:
+          - Fn::ImportValue: !Join [ '-', [ !Ref SendClusterName,"LoginServerSG" ] ]
+        SubnetIds: 
+          - Fn::ImportValue: !Join [ '-', [ !Ref SendClusterName,"PublicSubnet" ] ]
+
+
+
+  # Update Receiver Config
+  UpdateReceiverConfigFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      Code:
+        ZipFile: |
+          import boto3
+          import cfnresponse
+          import os
+          import boto3
+          import json
+
+          SENDER_CLUSTER_MASTER_IP = os.getenv('SENDER_CLUSTER_MASTER_IP')
+          RECEIVER_CLUSTER_MASTER_IP = os.getenv('RECEIVER_CLUSTER_MASTER_IP')
+          SENDER_CLUSTER_NAME = os.getenv('SENDER_CLUSTER_NAME')
+          RECEIVER_CLUSTER_NAME = os.getenv('RECEIVER_CLUSTER_NAME')
+          SENDER_CLUSTER_INDEX = os.getenv('SENDER_CLUSTER_INDEX')
+          RECEIVER_CLUSTER_INDEX = os.getenv('RECEIVER_CLUSTER_INDEX')
+
+          LSF_CONFIG_BUCKET = os.getenv('LSF_CONFIG_BUCKET')
+
+          LSB_QUEUES_PATH = '/mnt/tools/ibm/lsf/{}/conf/lsbatch/{}/configdir/lsb.queues'.format(RECEIVER_CLUSTER_NAME,RECEIVER_CLUSTER_NAME)
+          LSF_SHARED_PATH = '/mnt/tools/ibm/lsf/{}/conf/lsf.shared'.format(RECEIVER_CLUSTER_NAME)
+
+          s3_client = boto3.client('s3')
+
+          def lambda_handler(event, context):
+            print('Received event: ' + json.dumps(event))
+
+            if 'Delete' in event['RequestType']:
+              response=cfnresponse.send(event, context, 'SUCCESS', {})
+
+            responseData = {}
+            status = 'FAILED'
+            try: 
+              lsb_queues_obj = s3_client.get_object(Bucket=LSF_CONFIG_BUCKET, Key='eda-workshop-cloud-scale/source/config/multicluster/lsb.queues.rcv')
+              lsb_queues_content = lsb_queues_obj['Body'].read().decode('utf-8') 
+              lsb_queues_content = lsb_queues_content.replace('_OTHER_CLUSTER_NAME_',SENDER_CLUSTER_NAME)
+              
+              lsb_queues_file = open(LSB_QUEUES_PATH, "w")
+              lsb_queues_file.write(lsb_queues_content)
+              lsb_queues_file.close()
+              
+              lsf_shared_obj = s3_client.get_object(Bucket=LSF_CONFIG_BUCKET, Key='eda-workshop-cloud-scale/source/config/multicluster/lsf.shared.multicluster')
+              lsf_shared_content = lsf_shared_obj['Body'].read().decode('utf-8') 
+              lsf_shared_content = lsf_shared_content.replace('_THIS_CLUSTER_NAME_',RECEIVER_CLUSTER_NAME)
+              lsf_shared_content = lsf_shared_content.replace('_OTHER_CLUSTER_NAME_',SENDER_CLUSTER_NAME)
+              lsf_shared_content = lsf_shared_content.replace('_THIS_CLUSTER_LSF_MASTER_IP_',RECEIVER_CLUSTER_MASTER_IP)
+              lsf_shared_content = lsf_shared_content.replace('_OTHER_CLUSTER_LSF_MASTER_IP_',SENDER_CLUSTER_MASTER_IP)
+              lsf_shared_content = lsf_shared_content.replace('_THIS_CLUSTER_INDEX_',RECEIVER_CLUSTER_INDEX)
+              lsf_shared_content = lsf_shared_content.replace('_OTHER_CLUSTER_INDEX_',SENDER_CLUSTER_INDEX)
+              
+              lsf_shared_file = open(LSF_SHARED_PATH, "w")
+              lsf_shared_file.write(lsf_shared_content)
+              lsf_shared_file.close()
+              status = 'SUCCESS'
+            except Exception as e:
+              status = 'FAILED'
+              responseData['error'] = str(e)
+            response=cfnresponse.send(event, context, status, responseData) 
+      Runtime: python3.8
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaRole.Arn
+      Timeout: 10
+      MemorySize: 512
+      ReservedConcurrentExecutions: 5
+      FileSystemConfigs:
+        - LocalMountPath: "/mnt/tools"
+          Arn:
+            Fn::ImportValue: !Join [ '-', [ !Ref RcvClusterName,"LSFEFSAccessPointArn" ] ] 
+      Environment: 
+        Variables:
+          SENDER_CLUSTER_MASTER_IP:
+            Fn::ImportValue: !Join [ '-', [ !Ref SendClusterName,"LSFMasterPrivateIP" ] ] 
+          RECEIVER_CLUSTER_MASTER_IP:
+            Fn::ImportValue: !Join [ '-', [ !Ref RcvClusterName,"LSFMasterPrivateIP" ] ]
+          LSF_INSTALL_PATH: !Ref LSFInstallPath
+          SENDER_CLUSTER_NAME: !Ref SendClusterName
+          RECEIVER_CLUSTER_NAME: !Ref RcvClusterName
+          LSF_CONFIG_BUCKET: !Ref SourceS3Bucket
+          SENDER_CLUSTER_INDEX: "1"
+          RECEIVER_CLUSTER_INDEX: "2"
+      VpcConfig: 
+        SecurityGroupIds:
+          - Fn::ImportValue: !Join [ '-', [ !Ref RcvClusterName,"LoginServerSG" ] ]
+        SubnetIds: 
+          - Fn::ImportValue: !Join [ '-', [ !Ref RcvClusterName,"PublicSubnet" ] ]
+
+  UpdateReceiverConfig:
+    Type: Custom::UpdateReceiverConfig
+    Properties:
+      ServiceToken: !GetAtt UpdateReceiverConfigFunction.Arn
+
+  UpdateSenderConfig:
+    Type: Custom::UpdateSenderConfig
+    Properties:
+      ServiceToken: !GetAtt UpdateSenderConfigFunction.Arn

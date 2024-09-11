@@ -1,0 +1,991 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description:
+  Setup Flexcache relaptionship between two FSxN storage system
+  
+Parameters:
+  LSFClusterName:
+    Description: LSf Cluster Name
+    Type: String
+  OnPremPrivateSubnetId0:
+    Description: OnPrem subnet ID shared from onprem-vpc stack
+    Type: String
+  OnPremDefaultSecurityGroupId:
+    Description: OnPrem VPC Security Group shared from onprem-vpc stack
+    Type: String
+  CloudPrivateSubnetId0:
+    Description: OnPrem VPC Security Group shared from onprem-vpc stack
+    Type: String 
+  OnPremVpcId:
+    Type: String
+  CloudDefaultSecurityGroupId:
+    Description: Cloud VPC Security Group shared from cloud-vpc stack
+    Type: String  
+  CloudVpcId:
+    Type: String
+  OnPremOntapStorageVirtualMachine:
+    Type: String
+  CloudOntapStorageVirtualMachine:
+    Type: String
+  OnPremOntapVolume:
+    Type: String
+  RequestsLayer:
+    Type: String
+  
+Resources:
+  
+  ApiInvoke:
+    DependsOn: ApiConfiguration
+    Type: AWS::CloudFormation::CustomResource
+    Properties:
+      ServiceToken: !GetAtt ApiConfiguration.Arn
+      FunctionName: !Ref ApiConfiguration
+
+  ApiConfiguration:
+    Type: AWS::Lambda::Function
+    Properties:
+      Handler: index.lambda_handler
+      FunctionName: !Sub ApiConfiguration-${AWS::StackName}
+      Role: 
+        Fn::ImportValue: !Join [ '-', [ 'FSxRestAPIRole', !Ref LSFClusterName] ]
+      Layers:
+        - !Ref RequestsLayer
+      VpcConfig:
+        SecurityGroupIds: 
+            - !Ref OnPremDefaultSecurityGroupId
+        SubnetIds: 
+            - !Ref OnPremPrivateSubnetId0
+      Environment:
+        Variables:
+          OnPremVpc:
+            Fn::ImportValue: !Join [ '-', [!Ref OnPremVpcId, "Parameter"] ] 
+          CloudVpc: 
+            Fn::ImportValue: !Join [ '-', [!Ref CloudVpcId, "Parameter"] ]
+          fileSystemStack: 
+            Fn::ImportValue: !Join [ '-', [!Ref LSFClusterName, "FileSystemParameter" ] ]
+      Code:
+        ZipFile: |
+          import json
+          import boto3
+          import cfnresponse
+          from botocore.exceptions import ClientError
+
+          import botocore
+          import os
+          import time
+
+          import base64
+          import sys
+          import requests
+          import urllib3 as ur
+          ur.disable_warnings()
+
+          def getendpoints(event, context, filesystemid, vpc):
+              client = boto3.client('fsx')
+              ipAddress="UNKNOWN"
+              try:
+                  print("Getting  endpoint IPs for file system:",filesystemid)
+                  fsxresponse = client.describe_file_systems(
+                      FileSystemIds=[filesystemid]
+                      )
+                  #print("fsxresponse is:", fsxresponse)
+                  mgmtIpAddress=fsxresponse['FileSystems'][0]['OntapConfiguration']['Endpoints']['Management']['IpAddresses'][0]
+                  InterClusteripAddress=fsxresponse['FileSystems'][0]['OntapConfiguration']['Endpoints']['Intercluster']['IpAddresses']
+              except Exception as e:
+                  print(f'There was an error {e} getting  endpoint IP details of the file system')
+                  responseData['Error'] = e
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              return (mgmtIpAddress,InterClusteripAddress)
+              
+          def getSVM(event, context, filesystemid, vpc):
+              client = boto3.client('fsx')
+              try:
+                  print("Getting  SVMs for file system:",filesystemid)
+                  fsxresponse = client.describe_storage_virtual_machines(
+                      Filters=[ {'Name': 'file-system-id', 'Values': [filesystemid]} ]
+                      )
+                  #print("fsxresponse is:", fsxresponse)
+                  svmList=fsxresponse['StorageVirtualMachines']
+              except Exception as e:
+                  print(f'There was an error {e} getting  SVM list of the file system')
+                  responseData['Error'] = e
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              return (svmList)
+              
+          def getVolumes(event, context, filesystemid, vpc):
+              client = boto3.client('fsx')
+              try:
+                  print("Getting  Volumes for file system:",filesystemid)
+                  fsxresponse = client.describe_volumes(
+                      Filters=[ {'Name': 'file-system-id', 'Values': [filesystemid]} ]
+                      )
+                  #print("fsxresponse is:", fsxresponse)
+                  volList=fsxresponse['Volumes']
+              except Exception as e:
+                  print(f'There was an error {e} getting Volume details of the file system')
+                  responseData['Error'] = e
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              return (volList)
+
+          def deleteVolumes(event, context, volumeId, vpc):
+              client = boto3.client('fsx')
+              try:
+                  print("Initiating delete for volume:",volumeId)
+                  fsxresponse = client.delete_volume(
+                      VolumeId=volumeId,
+                      OntapConfiguration={'SkipFinalBackup': True}
+                      )
+                  #print("fsxresponse is:", fsxresponse)
+              except Exception as e:
+                  print(f'There was an error {e} deleting volume')
+                  responseData['Error'] = e
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+
+              return ()
+
+          def get_secret(event, context, secret_name, vpc):
+              session = boto3.session.Session()
+              client = session.client(
+                  service_name='secretsmanager',
+              )
+              try:
+                  get_secret_value_response = client.get_secret_value(
+                      SecretId=secret_name
+                  )
+                  #print("Response is:",get_secret_value_response)
+              except ClientError as e:
+                  if e.response['Error']['Code'] == 'ResourceNotFoundException':
+                      print("The requested secret " + secret_name + " was not found")
+                  elif e.response['Error']['Code'] == 'InvalidRequestException':
+                      print("The request was invalid due to:", e)
+                  elif e.response['Error']['Code'] == 'InvalidParameterException':
+                      print("The request had invalid params:", e)
+                  elif e.response['Error']['Code'] == 'DecryptionFailure':
+                      print("The requested secret can't be decrypted using the provided KMS key:", e)
+                  elif e.response['Error']['Code'] == 'InternalServiceError':
+                      print("An error occurred on service side:", e)
+                  responseData['Error'] = e
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              else:
+                  # Secrets Manager decrypts the secret value using the associated KMS CMK
+                  # Depending on whether the secret was a string or binary, only one of these fields will be populated
+                  if 'SecretString' in get_secret_value_response:
+                      text_secret_data = get_secret_value_response['SecretString']
+                      return text_secret_data
+                  else:
+                      binary_secret_data = get_secret_value_response['SecretBinary']
+                      return binary_secret_data
+                    
+          #Function to fetch FSx file system IDs of primary and Cloud             
+          def getResourceIdFromStack(event, context, vpc, stackId, LogicalResourceId):
+              cf_client = boto3.client('cloudformation')
+              try:
+                  response = cf_client.describe_stack_resource(StackName=stackId,LogicalResourceId=LogicalResourceId)
+                  physicalResourceId=response['StackResourceDetail']['PhysicalResourceId']
+                  return(physicalResourceId)
+              except Exception as e:
+                  print("Could not query Logical Resources ID from Stack:", e)
+                  responseData = {}
+                  responseData['Error'] = "CouldNotqueryResourceIdFromStack"
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+                  
+          def getJobStatus(event, context, endpoint, headers, uuid, jobType):
+              url = "https://{}/api/cluster/jobs/{}".format(endpoint, uuid)
+              response = requests.get(url, headers=headers, verify=False)
+              response = response.json()
+              print("Job Status Response is:", response)
+              if response['state'] == "failure":
+                  print("{} creation failed due to :{}".format(jobType,response['message']))
+              elif response['state'] == "success":
+                  print(jobType," completed successfully")
+              else:
+                  print(jobType," is in-progress")
+                  time.sleep(5)
+                  url = "https://{}/api/cluster/jobs/{}".format(endpoint, response['uuid'])
+                  getJobStatus(event, context, endpoint, headers, response['uuid'],jobType)
+              
+          def getOntapVersion(event, context, endpoint, headers):
+              print("Cluster IP is:", endpoint)
+              url = "https://{}/api/cluster?fields=version".format(endpoint)
+              response = requests.get(url, headers=headers, verify=False)
+              return response.json()
+
+          def getVolumesRestAPI(event, context, endpoint, headers, svm):
+              url = "https://{}/api/storage/volumes/?svm.name={}".format(endpoint, svm)
+              response = requests.get(url, headers=headers, verify=False)
+              return response.json()
+              
+          def createVolume(event, context, endpoint, headers, volType, svm, volName, volSize, junction_path):
+              url = "https://{}/api/storage/volumes".format(endpoint)
+              payload = {
+                  "aggregates.name": ["aggr1"],
+                  "svm.name": svm,
+                  "name": volName,
+                  "size": volSize,
+                  "type": volType,
+                  "nas.path": junction_path
+              }
+              try:
+                  response = requests.post(url, headers=headers, json=payload,verify=False)
+              except requests.exceptions.HTTPError as e:
+                  print("Request ERROR: Unable to create volume.Exiting", e)
+                  responseData = {}
+                  responseData['Error'] = e
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              except requests.exceptions.RequestException as e:
+                  print("Request ERROR: Unable to create volume.Exiting", e)
+                  responseData = {}
+                  responseData['Error'] = e
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              if 'error' in response.json():
+                  print("ERROR: Unable to create volume.Exiting", response.json())
+                  responseData = {}
+                  responseData['Error'] = response.json()
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              else:
+                  print("Create volume response:", response.json())
+                  return response.json()
+
+          def updateVolume(event, context, endpoint, headers, voluuid):
+              url = "https://{}/api/storage/volumes/{}".format(endpoint,voluuid)
+              payload = {
+                  "state": "offline"
+              }
+              try:
+                  response = requests.patch(url, headers=headers, json=payload,verify=False)
+              except requests.exceptions.HTTPError as e:
+                  print("Request ERROR: Unable to offline volume.Exiting", e)
+                  responseData = {}
+                  responseData['Error'] = e
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              except requests.exceptions.RequestException as e:
+                  print("Request ERROR: Unable to offline volume.Exiting", e)
+                  responseData = {}
+                  responseData['Error'] = e
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              if 'error' in response.json():
+                  print("ERROR: Unable to offline volume.Exiting", response.json())
+                  responseData = {}
+                  responseData['Error'] = response.json()
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              else:
+                  print("offline volume response:", response.json())
+                  return response.json()
+
+          def unmountVolume(event, context, endpoint, headers, voluuid):
+              url = "https://{}/api/storage/volumes/{}".format(endpoint,voluuid)
+              payload = {
+                  "nas.path": ""
+              }
+              try:
+                  response = requests.patch(url, headers=headers, json=payload,verify=False)
+              except requests.exceptions.HTTPError as e:
+                  print("Request ERROR: Unable to unmount volume.Exiting", e)
+                  responseData = {}
+                  responseData['Error'] = e
+                  ##response=cfnresponse.send(event, context, "FAILED", responseData)
+                  exit()
+              except requests.exceptions.RequestException as e:
+                  print("Request ERROR: Unable to unmount volume.Exiting", e)
+                  responseData = {}
+                  responseData['Error'] = e
+                  ##response=cfnresponse.send(event, context, "FAILED", responseData)
+              if 'error' in response.json():
+                  print("ERROR: Unable to unmount volume.Exiting", response.json())
+                  responseData = {}
+                  responseData['Error'] = response.json()
+                  ##response=cfnresponse.send(event, context, "FAILED", responseData)
+              else:
+                  print("offline volume response:", response.json())
+                  return response.json()
+
+          def deleteVolume(event, context, endpoint, headers, voluuid):
+              url = "https://{}/api/storage/volumes/{}".format(endpoint,voluuid)
+              try:
+                  response = requests.delete(url, headers=headers,verify=False)
+              except requests.exceptions.HTTPError as e:
+                  print("Request ERROR: Unable to delete volume.Exiting", e)
+                  responseData = {}
+                  responseData['Error'] = e
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+                  exit()
+              except requests.exceptions.RequestException as e:
+                  print("Request ERROR: Unable to delete volume.Exiting", e)
+                  responseData = {}
+                  responseData['Error'] = e
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              if 'error' in response.json():
+                  print("ERROR: Unable to delete volume.Exiting", response.json())
+                  responseData = {}
+                  responseData['Error'] = response.json()
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              else:
+                  print("Delete volume response:", response.json())
+                  return response.json()
+
+          def deleteFlexCache(event, context, endpoint, headers, voluuid):
+              url = "https://{}/api/storage/flexcache/flexcaches/{}".format(endpoint,voluuid)
+              try:
+                  response = requests.delete(url, headers=headers,verify=False)
+              except requests.exceptions.HTTPError as e:
+                  print("Request ERROR: Unable to delete FlexCache.Exiting", e)
+                  responseData = {}
+                  responseData['Error'] = e
+                  ##response=cfnresponse.send(event, context, "FAILED", responseData)
+                  exit()
+              except requests.exceptions.RequestException as e:
+                  print("Request ERROR: Unable to delete FlexCache.Exiting", e)
+                  responseData = {}
+                  responseData['Error'] = e
+                  ##response=cfnresponse.send(event, context, "FAILED", responseData)
+              if 'error' in response.json():
+                  print("ERROR: Unable to delete FlexCache.Exiting", response.json())
+                  responseData = {}
+                  responseData['Error'] = response.json()
+                  ##response=cfnresponse.send(event, context, "FAILED", responseData)
+              else:
+                  print("FlexCache delete  response:", response.json())
+                  return response.json()
+                  
+          def createSVMPeering(event, context, endpoint, headers, svm, peerSvm, peerCluster):
+              try:
+                  url = "https://{}/api/svm/peers".format(endpoint)
+                  payload = {
+                      "svm":{"name": svm}, 
+                      "peer.cluster.name":peerCluster, 
+                      "peer.svm.name":peerSvm, 
+                      "applications":["snapmirror","flexcache"]
+                  }
+                  response = requests.post(url, headers=headers, json=payload,verify=False)
+              except requests.exceptions.HTTPError as e:
+                  print("Request ERROR: Unable to create SVM peering.Exiting", e)
+                  responseData = {}
+                  responseData['Error'] = e
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+                  exit()
+              except requests.exceptions.RequestException as e:
+                  print("Request ERROR: Unable to create SVM peering.Exiting", e)
+                  responseData = {}
+                  responseData['Error'] = e
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              if 'error' in response.json():
+                  print("ERROR: Unable to create SVM peering.Exiting", response.json())
+                  responseData = {}
+                  responseData['Error'] = response.json()
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              else:
+                  print("Create SVM peer response:", response.json())
+                  return response.json()
+                  
+          def updateSVMPeering(event, context, endpoint, headers, uuid):
+              try:
+                  url = "https://{}/api/svm/peers/{}".format(endpoint,uuid)
+                  payload = {"state":"peered"}
+                  response = requests.patch(url, headers=headers, json=payload,verify=False)
+              except requests.exceptions.HTTPError as e:
+                  print("Request ERROR: Unable to update SVM peering.Exiting", e)
+                  responseData = {}
+                  responseData['Error'] = e
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              except requests.exceptions.RequestException as e:
+                  print("Request ERROR: Unable to update SVM peering.Exiting", e)
+                  responseData = {}
+                  responseData['Error'] = e
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              if 'error' in response.json():
+                  print("ERROR: Unable to update SVM peering.Exiting", response.json())
+                  responseData = {}
+                  responseData['Error'] = response.json()
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              else:
+                  print("Update SVM peer response:", response.json())
+                  return response.json()
+
+          def deleteSVMPeering(event, context, endpoint, headers, uuid):
+              try:
+                  url = "https://{}/api/svm/peers/{}".format(endpoint,uuid)
+                  response = requests.delete(url, headers=headers,verify=False)
+              except requests.exceptions.HTTPError as e:
+                  print("Request ERROR: Unable to delete SVM peering.Exiting", e)
+                  responseData = {}
+                  responseData['Error'] = e
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              except requests.exceptions.RequestException as e:
+                  print("Request ERROR: Unable to delete SVM peering.Exiting", e)
+                  responseData = {}
+                  responseData['Error'] = e
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              if 'error' in response.json():
+                  print("ERROR: Unable to delete SVM peering.Exiting", response.json())
+                  responseData = {}
+                  responseData['Error'] = response.json()
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              else:
+                  print("Delete SVM peer response:", response.json())
+                  return response.json()
+
+          def getSVMPeering(event, context, endpoint,headers,svm):
+              try:
+                  url = "https://{}/api/svm/peers/?svm.name={}".format(endpoint,svm)
+                  response = requests.get(url, headers=headers,verify=False)
+              except requests.exceptions.HTTPError as e:
+                  print("Request ERROR: Unable to list SVM peer detail.Exiting", e)
+                  responseData = {}
+                  responseData['Error'] = e
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              except requests.exceptions.RequestException as e:
+                  print("Request ERROR: Unable to list SVM peer detail.Exiting", e)
+                  responseData = {}
+                  responseData['Error'] = e
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              if 'error' in response.json():
+                  print("ERROR: Unable to list SVM peer.Exiting", response.json())
+                  responseData = {}
+                  responseData['Error'] = response.json()
+                  ##response=cfnresponse.send(event, context, "FAILED", responseData)
+              else:
+                  print("List SVM GET peer response:", response.json())
+                  return response.json()
+                  
+          def createClusterPeering(event, context, endpoint,headers,interClusterLifs,passphrase): 
+              try:
+                  url = "https://{}/api/cluster/peers".format(endpoint)
+                  if passphrase == "":
+                    payload = {
+                    "remote": {"ip_addresses": interClusterLifs}
+                    }
+                  else:
+                    payload = {
+                    "authentication": {"passphrase": passphrase},
+                    "remote": {"ip_addresses": interClusterLifs}
+                    }
+                  response = requests.post(url, headers=headers, json=payload,verify=False)
+              except requests.exceptions.HTTPError as e:
+                  print("Request ERROR: Unable to create cluster peering.Exiting", e)
+                  responseData = {}
+                  responseData['Error'] = e
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              except requests.exceptions.RequestException as e:
+                  print("Request ERROR: Unable to create cluster peering.Exiting", e)
+                  responseData = {}
+                  responseData['Error'] = e
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              if 'error' in response.json():
+                  print("ERROR: Unable to create cluster peering.Exiting", response.json())
+                  responseData = {}
+                  responseData['Error'] = response.json()
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              else:
+                  print("Create cluster peer response:", response.json())
+                  return response.json()
+              
+          def getClusterPeering(event, context, endpoint, headers):
+              try:
+                  url = "https://{}/api/cluster/peers".format(endpoint)
+                  response = requests.get(url, headers=headers,verify=False)
+              except requests.exceptions.HTTPError as e:
+                  print("Request ERROR: Unable to list cluster peer detail.Exiting", e)
+                  responseData = {}
+                  responseData['Error'] = e
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              except requests.exceptions.RequestException as e:
+                  print("Request ERROR: Unable to list cluster peer detail.Exiting", e)
+                  responseData = {}
+                  responseData['Error'] = e
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              if 'error' in response.json():
+                  print("ERROR: Unable to list cluster peer.Exiting", response.json())
+                  responseData = {}
+                  responseData['Error'] = response.json()
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              else:
+                  print("List cluster peer response:", response.json())
+                  return response.json()
+
+          def deleteClusterPeering(event, context, endpoint, headers, uuid):
+              print("Initiating delete of cluster peer uuid:", uuid)
+              try:
+                  url = "https://{}/api/cluster/peers/{}".format(endpoint, str(uuid))
+                  response = requests.delete(url, headers=headers,verify=False)
+              except requests.exceptions.HTTPError as e:
+                  print("Request ERROR: Unable to delete cluster peer detail.Exiting", e)
+                  responseData = {}
+                  responseData['Error'] = e
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              except requests.exceptions.RequestException as e:
+                  print("Request ERROR: Unable to delete cluster peer detail.Exiting", e)
+                  responseData = {}
+                  responseData['Error'] = e
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              if 'error' in response.json():
+                  print("ERROR: Unable to delete cluster peer.Exiting", response.json())
+                  responseData = {}
+                  responseData['Error'] = response.json()
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              else:
+                  print("Delete cluster peer response:", response.json())
+                  return response.json()
+
+          def createSnapMirror(event, context, endpoint,headers,svm,sourceVol,peerSvm,destVol):
+              sourcePath=svm+":"+sourceVol
+              destPath=peerSvm+":"+destVol
+              print ("Source Path is:", sourcePath,"and destination Path is:", destPath)
+              url = "https://{}/api/snapmirror/relationships/".format(endpoint)
+              payload = {
+                  "source": {"path": sourcePath}, 
+                  "destination": { "path": destPath }
+              }
+              try:
+                  response = requests.post(url, headers=headers, json=payload, verify=False)
+              except requests.exceptions.HTTPError as e:
+                  print("Request ERROR: Unable to create SnapMirror.Exiting", e)
+                  responseData = {}
+                  responseData['Error'] = e
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              except requests.exceptions.RequestException as e:
+                  print("Request ERROR: Unable to create SnapMirror.Exiting", e)
+                  responseData = {}
+                  responseData['Error'] = e
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              if 'error' in response.json():
+                  print("ERROR: Unable to create SnapMirror.Exiting", response.json())
+                  responseData = {}
+                  responseData['Error'] = response.json()
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              else:
+                  print("Create SnapMirror response:", response.json())
+                  return response.json()
+                  
+          def listSnapMirror(event, context, endpoint, headers):
+              url = "https://{}/api/snapmirror/relationships/".format(endpoint)
+              try:
+                  response = requests.get(url, headers=headers,verify=False)
+              except requests.exceptions.HTTPError as e:
+                  print("Request ERROR: Unable to list SnapMirror.Exiting", e)
+                  responseData = {}
+                  responseData['Error'] = e
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              except requests.exceptions.RequestException as e:
+                  print("Request ERROR: Unable to list SnapMirror.Exiting", e)
+                  responseData = {}
+                  responseData['Error'] = e
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              if 'error' in response.json():
+                  print("ERROR: Unable to list SnapMirror.Exiting", response.json())
+                  responseData = {}
+                  responseData['Error'] = response.json()
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              else:
+                  print("List SnapMirror response:", response.json())
+                  return response.json()
+
+          def updateSnapMirror(event, context, endpoint, headers, smuuid, state):
+              url = "https://{}/api/snapmirror/relationships/{}".format(endpoint,smuuid)
+              payload = {
+                  "state": state
+              }
+              try:
+                  response = requests.patch(url, headers=headers, json=payload, verify=False)
+              except requests.exceptions.HTTPError as e:
+                  print("Request ERROR: Unable to update SnapMirror.Exiting", e)
+                  responseData = {}
+                  responseData['Error'] = e
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              except requests.exceptions.RequestException as e:
+                  print("Request ERROR: Unable to update SnapMirror.Exiting", e)
+                  responseData = {}
+                  responseData['Error'] = e
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              if 'error' in response.json():
+                  print("ERROR: Unable to update SnapMirror.Exiting", response.json())
+                  responseData = {}
+                  responseData['Error'] = response.json()
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              else:
+                  print("Update SnapMirror response:", response.json())
+                  return response.json()
+                  
+          def deleteSnapMirror(event, context, endpoint, headers, smuuid):
+              url = "https://{}/api/snapmirror/relationships/{}".format(endpoint,smuuid)
+              try:
+                  response = requests.delete(url, headers=headers,verify=False)
+              except requests.exceptions.HTTPError as e:
+                  print("Request ERROR: Unable to delete SnapMirror.Exiting", e)
+                  responseData = {}
+                  responseData['Error'] = e
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              except requests.exceptions.RequestException as e:
+                  print("Request ERROR: Unable to delete SnapMirror.Exiting", e)
+                  responseData = {}
+                  responseData['Error'] = e
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              if 'error' in response.json():
+                  print("ERROR: Unable to delete SnapMirror.Exiting", response.json())
+                  responseData = {}
+                  responseData['Error'] = response.json()
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              else:
+                  print("Delete SnapMirror response:", response.json())
+                  return response.json()
+
+          def createCloudFlexVolume(event, context, endpoint, headers, secondarySVM, Flex_volName_tools, Flex_volSize, primarySVM, onprem_origin_volume, Flex_junction_path_tools):
+              url = "https://{}/api/private/cli/volume/flexcache/".format(endpoint)
+              payload = {
+                  "vserver": secondarySVM,
+                  "volume": Flex_volName_tools,
+                  "aggr-list": ["aggr1"],
+                  "size": Flex_volSize,
+                  "origin-vserver": primarySVM,
+                  "origin-volume": onprem_origin_volume,
+                  "aggr-list-multiplier": 2,
+                  "junction-path": Flex_junction_path_tools,
+              }
+              try:
+                  response = requests.post(url, headers=headers, json=payload,verify=False)
+              except requests.exceptions.HTTPError as e:
+                  print("Request ERROR: Unable to create Cloud FlexCache volume.Exiting", e)
+                  responseData = {}
+                  responseData['Error'] = e
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              except requests.exceptions.RequestException as e:
+                  print("Request ERROR: Unable to create Cloud FlexCache volume.Exiting", e)
+                  responseData = {}
+                  responseData['Error'] = e
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              if 'error' in response.json():
+                  print("ERROR: Unable to create Cloud FlexCache volume.Exiting", response.json())
+                  responseData = {}
+                  responseData['Error'] = response.json()
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              else:
+                  print("Create Cloud FlexCache volume response:", response.json())
+                  return response.json()
+
+          def createOnPremFlexVolume(event, context, endpoint, headers, primarySVM, Flex_volName_scratch, Flex_volSize, secondarySVM, cloud_origin_volume, Flex_junction_path_scratch):
+              url = "https://{}/api/private/cli/volume/flexcache/".format(endpoint)
+              payload = {
+                  "vserver": primarySVM,
+                  "volume": Flex_volName_scratch,
+                  "aggr-list": ["aggr1"],
+                  "size": Flex_volSize,
+                  "origin-vserver": secondarySVM,
+                  "origin-volume": cloud_origin_volume,
+                  "aggr-list-multiplier": 2,
+                  "junction-path": Flex_junction_path_scratch,
+              }
+              try:
+                  response = requests.post(url, headers=headers, json=payload,verify=False)
+              except requests.exceptions.HTTPError as e:
+                  print("Request ERROR: Unable to create OnPrem FlexCache volume.Exiting", e)
+                  responseData = {}
+                  responseData['Error'] = e
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              except requests.exceptions.RequestException as e:
+                  print("Request ERROR: Unable to create OnPrem FlexCache volume.Exiting", e)
+                  responseData = {}
+                  responseData['Error'] = e
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              if 'error' in response.json():
+                  print("ERROR: Unable to create OnPrem FlexCache volume.Exiting", response.json())
+                  responseData = {}
+                  responseData['Error'] = response.json()
+                  response=cfnresponse.send(event, context, "FAILED", responseData)
+              else:
+                  print("Create OnPrem FlexCache volume response:", response.json())
+                  return response.json()
+                  
+          def lambda_handler(event, context):
+              print('## ENVIRONMENT VARIABLES')
+              print(os.environ)
+              print('## EVENT')
+              print(event)
+
+              responseData = {}
+              cfnresponse.send(event, context, cfnresponse.SUCCESS, responseData)
+              
+              requestType = event['RequestType']
+              print("Request Type is:", requestType )
+                  
+              LogicalResourceId="OnPremOntapFileSystem"
+              OnPremVpc = os.environ['OnPremVpc']
+              stackId = os.environ['fileSystemStack']
+              primaryFileSystemId=getResourceIdFromStack(event,context,OnPremVpc,stackId,LogicalResourceId)
+              
+              LogicalResourceId="CloudOntapFileSystem"
+              CloudVpc = os.environ['CloudVpc']
+              stackId = os.environ['fileSystemStack']
+              secondaryFileSystemId=getResourceIdFromStack(event,context,CloudVpc,stackId,LogicalResourceId)
+              print("File system IDs are:",primaryFileSystemId,secondaryFileSystemId)
+                  
+              LogicalResourceId="FsxAdminPassword"
+              FSxsecretName=getResourceIdFromStack(event,context,OnPremVpc,stackId,LogicalResourceId).split(":")[6]
+              length=len(FSxsecretName)
+              FSxsecretName=FSxsecretName[:length - 7]
+                  
+              FSxSecret=json.loads(get_secret(event,context,FSxsecretName,OnPremVpc))
+                  
+              PRIMARYBASE64STRING = base64.encodebytes(
+              ('%s:%s' %
+              (FSxSecret["username"], FSxSecret["password"])).encode()).decode().replace('\n', '')
+
+              headers = {
+                  'authorization': "Basic %s" % PRIMARYBASE64STRING,
+                  'content-type': "application/json",
+                  'accept': "application/json"
+              }
+              
+              # Get File system management Endpoints
+              (primaryMgmtEndPoint,primaryInterClusterIps)=getendpoints(event,context,primaryFileSystemId,OnPremVpc)
+              print("OnPrem FS mgmtEndPoint is:", primaryMgmtEndPoint, "InterCluster is:",primaryInterClusterIps)
+                  
+              (secondaryMgmtEndPoint,secondaryInterClusterIps)=getendpoints(event,context,secondaryFileSystemId,CloudVpc)
+              print("Secondary/Cloud FS mgmtEndPoint is:", secondaryMgmtEndPoint, "InterCluster is:",secondaryInterClusterIps)
+               
+              # Get SVMs
+              svmList=getSVM(event,context,primaryFileSystemId,OnPremVpc)
+              for svm in svmList:
+                  if "onprem" in svm['Name']:
+                      primarySVM=svm['Name']
+                      print("OnPrem SVM is:", primarySVM)
+                  
+              svmList=getSVM(event,context,secondaryFileSystemId,CloudVpc)
+              for svm in svmList:
+                  if "cloud" in svm['Name']:
+                      secondarySVM=svm['Name']
+                      print("Secondary/Cloud SVM is:", secondarySVM)
+              
+              # Get OnPrem Volumes
+              volList=getVolumes(event,context,primaryFileSystemId,OnPremVpc)
+              for vol in volList:
+                  if vol['Name'] == "vol1_onprem":
+                      primaryVol=vol['Name']
+                      print("OnPrem FS volume is:", primaryVol)
+
+              # Get OnPrem Volumes REST API
+              response=getVolumesRestAPI(event,context,primaryMgmtEndPoint,headers,primarySVM)
+              print("OnPrem REST volume list is:", response)
+              for volume in response['records']:
+                  if volume['name']=="vol1_onprem":
+                      primaryVol=volume['name']
+                  
+              if requestType == "Create":  
+                  
+                  # Create Cloud volume
+                  volSize=102400 * 1024 * 1024
+                  volName="vol1_cloud"
+                  junction_path="/vol1_cloud"
+                  response=createVolume(event,context,secondaryMgmtEndPoint,headers,"RW",secondarySVM,volName,volSize,junction_path)
+                  getJobStatus(event,context,secondaryMgmtEndPoint,headers, response['job']['uuid'],"CreateVolume")
+                  
+                  # Create Cluster Peer
+                  passphrase=createClusterPeering(event,context,primaryMgmtEndPoint,headers,secondaryInterClusterIps,passphrase="")
+                  passphrase=passphrase['records'][0]['authentication']['passphrase']
+                  createClusterPeering(event,context,secondaryMgmtEndPoint,headers,primaryInterClusterIps,passphrase)
+                  time.sleep(20)
+
+                  # Create SVM Peer
+                  secondaryClusterName=getClusterPeering(event,context,primaryMgmtEndPoint,headers)['records'][0]['name']
+                  print("secondaryclustername=", secondaryClusterName)
+                  primaryClusterName=getClusterPeering(event,context,secondaryMgmtEndPoint,headers)['records'][0]['name']
+                  print("primaryclustername=", primaryClusterName)
+                  
+                  response=createSVMPeering(event,context,primaryMgmtEndPoint,headers,primarySVM,secondarySVM,secondaryClusterName)
+                  time.sleep(20)
+                  
+                  uuid=getSVMPeering(event,context,secondaryMgmtEndPoint,headers,secondarySVM)['records'][0]['uuid']
+                  updateSVMPeering(event,context,secondaryMgmtEndPoint,headers,uuid)
+                  time.sleep(20)
+                  
+                  # ***no need for SnapMirror relationship for EDA workshops, commenting out this create routing***
+                  # Create SnapMirror Relationship
+                  #response=createSnapMirror(event,context,secondaryMgmtEndPoint,headers,primarySVM,primaryVol,secondarySVM,volName)
+                  #getJobStatus(event,context,secondaryMgmtEndPoint,headers, response['job']['uuid'],"CreateSnapMirror")
+                  #time.sleep(20)
+                  
+                  #response=listSnapMirror(event,context,secondaryMgmtEndPoint,headers)
+                  #for smRelation in response['records']:
+                  #    smuuid=smRelation['uuid']
+                  #    response=updateSnapMirror(event,context,secondaryMgmtEndPoint,headers,smuuid,"snapmirrored")
+
+                  # Create FlexCache Cloud volume
+                  Flex_volSize="20G"
+                  Flex_volName_tools="tool_cached"
+                  Flex_junction_path_tools="/tool_cached"
+                  onprem_origin_volume="vol1_onprem"
+                  response=createCloudFlexVolume(event,context,secondaryMgmtEndPoint,headers,secondarySVM,Flex_volName_tools,Flex_volSize,primarySVM,onprem_origin_volume,Flex_junction_path_tools)
+                  getJobStatus(event,context,secondaryMgmtEndPoint,headers, response['job']['uuid'],"CreateCloudFlexVolume")
+                  time.sleep(20)
+
+                  # Create FlexCache OnPrem volume
+                  Flex_volSize="20G"
+                  Flex_volName_scratch="scratch_cached"
+                  Flex_junction_path_scratch="/scratch_cached"
+                  cloudorigin_volume="vol1_cloud"
+                  response=createOnPremFlexVolume(event,context,primaryMgmtEndPoint,headers,primarySVM,Flex_volName_scratch,Flex_volSize,secondarySVM,cloudorigin_volume,Flex_junction_path_scratch)
+                  getJobStatus(event,context,primaryMgmtEndPoint,headers, response['job']['uuid'],"CreateOnPremFlexVolume")
+                  time.sleep(20)       
+
+                  response=cfnresponse.send(event, context, "SUCCESS", responseData)
+                  return(response)
+                  
+              elif requestType == "Delete":
+                  
+                  # ***removing as Snapmirror vols are not present***
+                  # Delete Snapmirror
+                  #response=listSnapMirror(event,context,secondaryMgmtEndPoint,headers)
+                  #for smRelation in response['records']:
+                  #    smuuid=smRelation['uuid']
+                  #    if 'state' in smRelation.keys():
+                  #        smState=smRelation['state']
+                  #        if smState == "snapmirrored":
+                  #            response=updateSnapMirror(event,context,secondaryMgmtEndPoint,headers,smuuid,"paused")
+                  #            time.sleep(20)
+                  #            response=updateSnapMirror(event,context,secondaryMgmtEndPoint,headers,smuuid,"broken_off")
+                  #            time.sleep(20)
+                  #            response=deleteSnapMirror(event,context,secondaryMgmtEndPoint,headers,smuuid)
+                  #            time.sleep(20)
+                  #        elif smState == "paused":
+                  #            response=updateSnapMirror(event,context,secondaryMgmtEndPoint,headers,smuuid,"broken_off")
+                  #            time.sleep(20)
+                  #            response=deleteSnapMirror(event,context,secondaryMgmtEndPoint,headers,smuuid)
+                  #            time.sleep(20)
+                  #        elif smState == "uninitialized" or smState == "broken_off":
+                  #            response=deleteSnapMirror(event,context,secondaryMgmtEndPoint,headers,smuuid)
+                  #            time.sleep(20)
+                  #    else:
+                  #        response=deleteSnapMirror(event,context,secondaryMgmtEndPoint,headers,smuuid)
+                  #        time.sleep(20)
+                  
+                  # Delete Cloud Flexcache volumes in REST API
+                  response=getVolumesRestAPI(event,context,secondaryMgmtEndPoint,headers,secondarySVM)
+                  print("Cloud REST volume list is:", response)
+                  for volume in response['records']:
+                      if "cache" in volume['name']:
+                          voluuid=volume['uuid']
+                          response=unmountVolume(event,context,secondaryMgmtEndPoint,headers,voluuid)
+                          getJobStatus(event,context,secondaryMgmtEndPoint,headers, response['job']['uuid'],"UmountVolume")
+                          time.sleep(20)
+                          response=deleteFlexCache(event,context,secondaryMgmtEndPoint,headers,voluuid)
+                          getJobStatus(event,context,secondaryMgmtEndPoint,headers, response['job']['uuid'],"DeleteFlexCache")
+                          time.sleep(30)
+                            
+                  # Delete OnPrem Flexcache volumes in REST API
+                  response=getVolumesRestAPI(event,context,primaryMgmtEndPoint,headers,primarySVM)
+                  print("OnPrem REST volume list is:", response)
+                  for volume in response['records']:
+                      if "cache" in volume['name']:
+                          voluuid=volume['uuid']
+                          response=unmountVolume(event,context,primaryMgmtEndPoint,headers,voluuid)
+                          getJobStatus(event,context,primaryMgmtEndPoint,headers, response['job']['uuid'],"UmountVolume")
+                          time.sleep(20)
+                          response=deleteFlexCache(event,context,primaryMgmtEndPoint,headers,voluuid)
+                          getJobStatus(event,context,primaryMgmtEndPoint,headers, response['job']['uuid'],"DeleteFlexCache")
+                          time.sleep(30)
+
+                  # Delete Cloud volumes in REST API
+                  response=getVolumesRestAPI(event,context,secondaryMgmtEndPoint,headers,secondarySVM)
+                  print("Cloud REST volume list is:", response)
+                  for volume in response['records']:
+                      if "root" in volume['name']:
+                          continue
+                      elif "cache" in volume['name']:
+                          voluuid=volume['uuid']
+                          response=unmountVolume(event,context,secondaryMgmtEndPoint,headers,voluuid)
+                          getJobStatus(event,context,secondaryMgmtEndPoint,headers, response['job']['uuid'],"UmountVolume")
+                          time.sleep(20)
+                          response=deleteFlexCache(event,context,secondaryMgmtEndPoint,headers,voluuid)
+                          getJobStatus(event,context,secondaryMgmtEndPoint,headers, response['job']['uuid'],"DeleteFlexCache")
+                          time.sleep(30)
+                      else:
+                          voluuid=volume['uuid']
+                          response=unmountVolume(event,context,secondaryMgmtEndPoint,headers,voluuid)
+                          getJobStatus(event,context,secondaryMgmtEndPoint,headers, response['job']['uuid'],"UmountVolume")
+                          time.sleep(20)
+                          response=updateVolume(event,context,secondaryMgmtEndPoint,headers,voluuid)
+                          getJobStatus(event,context,secondaryMgmtEndPoint,headers, response['job']['uuid'],"OfflineVolume")
+                          time.sleep(20)
+                          response=deleteVolume(event,context,secondaryMgmtEndPoint,headers,voluuid)
+                          getJobStatus(event,context,secondaryMgmtEndPoint,headers, response['job']['uuid'],"DeleteVolume")
+                          time.sleep(30)
+
+                  # Delete primary OnPrem volumes in REST API
+                  response=getVolumesRestAPI(event,context,primaryMgmtEndPoint,headers,primarySVM)
+                  print("OnPrem REST volume list is:", response)
+                  for volume in response['records']:
+                      if "root" in volume['name']:
+                          continue
+                      elif "cache" in volume['name']:
+                          voluuid=volume['uuid']
+                          response=unmountVolume(event,context,primaryMgmtEndPoint,headers,voluuid)
+                          getJobStatus(event,context,primaryMgmtEndPoint,headers, response['job']['uuid'],"UmountVolume")
+                          time.sleep(20)
+                          response=deleteFlexCache(event,context,primaryMgmtEndPoint,headers,voluuid)
+                          getJobStatus(event,context,primaryMgmtEndPoint,headers, response['job']['uuid'],"DeleteFlexCache")
+                          time.sleep(30)
+                      else:
+                          voluuid=volume['uuid']
+                          response=unmountVolume(event,context,primaryMgmtEndPoint,headers,voluuid)
+                          getJobStatus(event,context,primaryMgmtEndPoint,headers, response['job']['uuid'],"UmountVolume")
+                          time.sleep(20)
+                          response=updateVolume(event,context,primaryMgmtEndPoint,headers,voluuid)
+                          getJobStatus(event,context,primaryMgmtEndPoint,headers, response['job']['uuid'],"OfflineVolume")
+                          time.sleep(20)
+                          response=deleteVolume(event,context,primaryMgmtEndPoint,headers,voluuid)
+                          getJobStatus(event,context,primaryMgmtEndPoint,headers, response['job']['uuid'],"DeleteVolume")
+                          time.sleep(30)
+
+                  # Delete non-root Cloud volumes in FSx API
+                  volList=getVolumes(event, context, secondaryFileSystemId,CloudVpc)
+                  print("Cloud FSx API volume list is:", volList)
+                  for vol in volList:
+                      if "root" in vol['Name']:
+                          continue
+                      else:
+                          deleteVolumes(event,context,vol['VolumeId'],CloudVpc)
+                          time.sleep(30)
+
+                  # Delete non-root/primary OnPrem volumes in FSx API
+                  volList=getVolumes(event, context, primaryFileSystemId,OnPremVpc)
+                  print("OnPrem FSx API volume list is:", volList)
+                  for vol in volList:
+                      if "root" in vol['Name']:
+                          continue
+                      else:
+                          deleteVolumes(event,context,vol['VolumeId'],OnPremVpc)
+                          time.sleep(30)
+
+                  # Delete SVM Peer
+                  response=getSVMPeering(event,context,secondaryMgmtEndPoint,headers,secondarySVM)
+                  if response['num_records'] == 0:
+                      print("No SVM peering found to delete")
+                  else:
+                      uuid=response['records'][0]['uuid']
+                      response=deleteSVMPeering(event,context,secondaryMgmtEndPoint,headers,uuid)
+                      #getJobStatus(event,context,secondaryMgmtEndPoint,headers, response,"DeleteSVMPeer")
+                  time.sleep(20) 
+                  
+                  # Delete Cluster Peer
+                  response=getClusterPeering(event,context,primaryMgmtEndPoint,headers)
+                  if response['num_records'] == 0:
+                      print("No Cluster peering found to delete on OnPrem file system")
+                  else:
+                      peeruuid=response['records'][0]['uuid']
+                      deleteClusterPeering(event,context,primaryMgmtEndPoint,headers,peeruuid)
+                  
+                  response=getClusterPeering(event,context,secondaryMgmtEndPoint,headers)
+                  if response['num_records'] == 0:
+                      print("No Cluster peering found to delete on secondary file system")
+                  else:
+                      peeruuid=response['records'][0]['uuid']
+                      deleteClusterPeering(event,context,secondaryMgmtEndPoint,headers,peeruuid)
+
+                  response=cfnresponse.send(event, context, "SUCCESS", responseData)
+                  return(response)
+              else:
+                  response=cfnresponse.send(event, context, "SUCCESS", responseData)
+                  return(response)
+             
+      Runtime: "python3.8"
+      Timeout: 900
+      ReservedConcurrentExecutions: 100
+

@@ -1,0 +1,731 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: |
+  (SO9040)-eda-workshop-cloud-scale kit V1.0.0 - Template
+  Deploys a full EDA computing infrastructure that includes a new VPC, login server with
+  remote desktop, LSF master, EFS file system, and a shared NFS file system.
+  
+  This root stack launches a nested stack for each infrastructure component.
+  
+  **WARNING** This template creates AWS resources. 
+  You will be billed for the AWS resources used if you create a stack from this template.
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Source Location
+        Parameters:
+          - SourceS3Bucket
+      - Label:
+          default: Flow Configuration
+        Parameters:
+          - FlowType
+      - Label:
+          default: Network configuration
+        Parameters:
+          - VpcCIDR
+          - VpcCIDROnPrem
+          - VpcAz
+          - VpcAzSecondary
+          - SshSource
+          - AdminKeyPair
+      - Label:
+          default: File system configuration
+        Parameters:
+          - ScratchDir
+          - ProjectDir
+      - Label:
+          default: LSF configuration
+        Parameters:
+          - LSFInstallPath
+          - LSFClusterName
+          - CustomerLSFInstallUri
+          - CustomerLSFBinsUri
+          - CustomerLSFBinsArchUri
+          - CustomerLSFEntitlementUri
+          - CustomerLSFFixPackUri
+          - CustomerLSFFixPackArchUri
+          - MasterInstanceType
+          - MasterServerAMI
+          - ComputeAMI
+      - Label:
+          default: Login server configuration
+        Parameters:
+          - LoginServerInstanceType
+          - LoginServerAMI
+          - UserName
+      - Label:
+          default: Amazon FSx for NetApp ONTAP filesystem parameters
+        Parameters:
+        - StorageType
+        - StorageCapacity
+        - ThroughputCapacity
+      - Label:
+          default: Amazon FSx for NetApp ONTAP storage virtual machine and volume parameters.
+        Parameters:
+        - RootVolumeSecurityStyle
+        - SecurityStyle
+        - TieringPolicy
+        - VolumeSize
+        - StorageEfficiencyEnabled
+        - LowFreeDataStorageCapacityThreshold
+
+    ParameterLabels:
+      FlowType:
+        default: Type of Flow to run
+      AdminKeyPair:
+        default: EC2 Key Pair
+      SshSource:
+        default: SSH source CIDR
+      MasterInstanceType:
+        default: LSF management server instance type
+      MasterServerAMI:
+        default: LSF management server AMI
+      ComputeAMI:
+        default: Compute node AMI
+      LSFClusterName:
+        default: Cluster name
+      LSFInstallPath:
+        default: LSF install path
+      ScratchDir:
+        default: Scratch subdirectory
+      ProjectDir:
+        default: Project subdirectory
+      VpcCIDR:
+        default: VPC CIDR range
+      VpcCIDROnPrem:
+        default: SimulatedOnPrem VPC CIDR range
+      VpcAz:
+        default: Availability zone
+      VpcAzSecondary:
+        default: Availability zone secondary
+      CustomerLSFInstallUri:
+        default: LSF 10.1 install script package
+      CustomerLSFBinsUri:
+        default: LSF 10.1 Linux base distribution package
+      CustomerLSFBinsArchUri:
+        default: LSF 10.1 Linux base distribution package for ARM architecture
+      CustomerLSFEntitlementUri:
+        default: LSF 10.1 entitlement file
+      CustomerLSFFixPackUri:
+        default: LSF 10.1 Fix Pack
+      CustomerLSFFixPackArchUri:
+        default: LSF 10.1 Fix Pack for ARM architecture
+      LoginServerInstanceType:
+        default: Login server instance type
+      LoginServerAMI:
+        default: Login server AMI
+      UserName:
+        default: Username for remote desktop login server
+      StorageType:
+        default: Filesystem storage type
+      StorageCapacity:
+        default: Storage capacity of the Amazon FSx for NetApp ONTAP filesystem
+      ThroughputCapacity:
+        default: Throughput capacity of the Amazon FSx for NetApp ONTAP filesystem
+      RootVolumeSecurityStyle:
+        default: Security style of the root volume
+      SecurityStyle:
+        default: Security style for the data volume
+      TieringPolicy:
+        default: Tiering policy for the volume
+      VolumeSize:
+        default: Size of the volume in MB (MegaBytes)
+      StorageEfficiencyEnabled:
+        default: Storage efficiency configuration
+      LowFreeDataStorageCapacityThreshold:
+        default: Threshold of alarm
+
+
+Parameters:
+  FlowType:
+    Description: "Select deployment mode"
+    Type: String
+    Default: "MultiCluster"
+    AllowedValues:
+      - SingleCluster
+      - MultiCluster
+
+  SourceS3Bucket:
+    Default: "cloud-scale-openlane"
+    Description: S3 bucket where Cloud Scale source is stored. 
+    Type: String
+
+  AdminKeyPair:
+    Description: "The name of an existing EC2 key pair to enable SSH access to the LSF management server."
+    Type: "AWS::EC2::KeyPair::KeyName"
+    Default: lsf-fsx-demo
+    AllowedPattern: ".+"
+
+  MasterInstanceType:
+    Description: "The instance type for the LSF management server."
+    Type: String
+    Default: "m5.2xlarge"
+    AllowedValues:
+      - m4.xlarge
+      - m4.2xlarge
+      - m5.xlarge
+      - m5.2xlarge
+
+  MasterServerAMI:
+    Description: "The AMI for the LSF management server. Amazon Linux 2 is recommended."
+    Type: String
+    Default: ALinux2
+    AllowedValues:
+      - ALinux2
+      - CentOS75
+
+  ComputeAMI:
+    Description: >
+      'FPGADev' provides access to the Xilinx Vivado EDA software.  Use this when deploying the AWS EDA workshop.
+      Choose 'CentOS' if you intend to run your own workloads in this environment.
+      NOTE: You must first subscribe to these AMIs in the AWS Marketplace.  See included documentation for details.
+    Type: String
+    Default: CentOS75
+    AllowedValues:
+      - FPGADev15
+      - CentOS75
+      - RHEL76Graviton
+
+  LSFClusterName:
+    Description: The name of the computing environment.  This will also be the name of the LSF cluster.
+    Type: String
+    Default: myawscluster
+
+  LSFInstallPath:
+    Description: >
+      The shared NFS path for installing LSF. This will be created on the included EFS file system
+      and mounted on all nodes in the cluster.
+    Type: "String"
+    Default: "/tools/ibm/lsf"
+    AllowedPattern: ^/.+
+
+  ScratchDir:
+    Description: The name for the runtime scratch data subdirectory
+    Type: String
+    Default: scratch
+    AllowedPattern: ^.+
+
+  ProjectDir:
+    Description: The name for the project design data subdirectory
+    Type: String
+    Default: proj
+    AllowedPattern: ^.+
+
+  SshSource:
+    Description: The CIDR range that is permitted to ssh into the infrastructure instances.
+      Use your public IP address (http://checkip.amazonaws.com).
+    Type: String
+    Default: 0.0.0.0/32
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/32
+    ConstraintDescription: This must be a valid IP CIDR range of the form x.x.x.x/32.
+
+  LoginServerInstanceType:
+    Description: The instance type for the remote desktop login server.
+    Type: String
+    Default: m5.xlarge
+    AllowedValues:
+      - t3.medium
+      - t3.xlarge
+      - m4.xlarge
+      - m4.2xlarge
+      - m5.xlarge
+      - m5.2xlarge
+      - c5d.9xlarge
+
+  LoginServerAMI:
+    Description: This should be the same AMI that is used for the compute nodes. 
+      AMI (OS image) for the master server.  NOTE You must first subscribe to this 
+      AMI in the AWS Marketplace at https://aws.amazon.com/marketplace/pp/B06VVYBLZZ"
+    Type: String
+    Default: ALinux2
+    AllowedValues:
+      - CentOS75
+      - FPGADev15
+      - ALinux2
+
+  VpcAz:
+    Description: The availability zone for this compute environment
+    Type: 'AWS::EC2::AvailabilityZone::Name'
+    Default: us-west-2a
+
+  VpcAzSecondary:
+    Description: The availability zone for this compute environment
+    Type: 'AWS::EC2::AvailabilityZone::Name'
+    Default: us-west-2d
+
+  VpcCIDR:
+    Default: 172.16.0.0/16
+    Description: The IP range in CIDR notation for this VPC on Region-B(Cloud). Please choose this range of CIDR(172.16.0.0 - 172.31.255.255). This should be a /16.
+    Type: String
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/(1[6-9]))$
+    ConstraintDescription: The CIDR block parameter must be in the form x.x.x.x/16
+
+  VpcCIDROnPrem:
+    Default: 10.0.0.0/16
+    Description: The IP range in CIDR notation for VPC on Region-A(On-Prem). Please choose this range of CIDR(10.0.0.0 - 10.255.255.255). This should be a /16.
+    Type: String
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/(1[6-9]))$
+    ConstraintDescription: The CIDR block parameter must be in the form x.x.x.x/16
+
+  CustomerLSFInstallUri:
+    Description: The S3 URI to the LSF installer script package, lsf10.1_lsfinstall_linux_x86_64.tar.Z.
+      Select object in the S3 console and choose Copy Path and paste here.
+    Type: String
+    Default: s3://<your_bucket>/lsf10.1_lsfinstall_linux_x86_64.tar.Z
+    AllowedPattern: s3\:\/\/.*\/lsf10.1_lsfinstall_linux_x86_64.tar.Z
+    ConstraintDescription: S3 path invalid. Please verify LSF package name matches
+      the example in the parameter description.
+
+  CustomerLSFBinsUri:
+    Description: The S3 URI to the LSF 10.1 Linux 2.6 kernel glibc version 2.3 base distribution package,
+      lsf10.1_linux2.6-glibc2.3-x86_64.tar.Z. This must be a full distribution and not a patch 
+      or Fix Pack package. Select object in the S3 console and choose Copy Path and paste here.
+    Type: String
+    Default: s3://<your_bucket>/lsf10.1_linux2.6-glibc2.3-x86_64.tar.Z
+    AllowedPattern: s3\:\/\/.*\/lsf10.1_linux2.6-glibc2.3-x86_64.tar.Z
+    ConstraintDescription: S3 path invalid. Please verify LSF package name matches
+      the example in the parameter description.
+
+  CustomerLSFBinsArchUri:
+    Description: The S3 URI to the LSF 10.1 Linux 3.2 kernel glibc version 2.17 ArmV8 base distribution package,
+      lsf10.1_lnx312-lib217-armv8. This must be a full distribution and not a patch 
+      or Fix Pack package. Select object in the S3 console and choose Copy Path and paste here.
+    Type: String
+    Default: s3://<your_bucket>/lsf10.1_lnx312-lib217-armv8.tar.Z
+    AllowedPattern: s3\:\/\/.*\/lsf10.1_lnx312-lib217-armv8.tar.Z
+    ConstraintDescription: S3 path invalid. Please verify LSF package name matches
+      the example in the parameter description.
+
+  CustomerLSFFixPackUri:
+    Description: >
+      The S3 URI to the LSF 10.1 Fix Pack package. This must be the lastest cumulative Fix Pack package.
+      Select package object in the console and choose Copy Path and paste here.
+    Type: "String"
+    Default: "s3://<your_bucket>/lsf10.1_linux2.6-glibc2.3-x86_64-601547.tar.Z"
+    AllowedPattern: s3\:\/\/.*\/lsf10.1_linux2.6-glibc2.3-x86_64-601547.tar.Z
+    ConstraintDescription: S3 path invalid. Please verify LSF package name matches
+      the example in the parameter description.
+
+  CustomerLSFFixPackArchUri:
+    Description: >
+      The S3 URI to the LSF 10.1 Fix Pack package. This must be the lastest cumulative Fix Pack package.
+      Select package object in the console and choose Copy Path and paste here.
+    Type: "String"
+    Default: "s3://<your_bucket>/lsf10.1_lnx312-lib217-armv8-601547.tar.Z"
+    AllowedPattern: s3\:\/\/.*\/lsf10.1_lnx312-lib217-armv8-601547.tar.Z
+    ConstraintDescription: S3 path invalid. Please verify LSF package name matches
+      the example in the parameter description.
+
+  CustomerLSFEntitlementUri:
+    Description: The S3 URI to the LSF entitlement file, lsf_std_entitlement.dat or lsf_adv_entitlement.dat.
+      Select object in the S3 console and choose Copy Path and paste here.
+    Type: String
+    Default: s3://<your_bucket>/lsf_std_entitlement.dat
+    AllowedPattern: s3\:\/\/.*
+    ConstraintDescription: S3 path invalid. Please verify LSF file name matches
+      the example in the parameter description.
+
+  UserName:
+    Default: simuser
+    Description: User name for DCV remote desktop login server. Default is "simuser".
+    MinLength: '4'
+    Type: String
+
+  StorageType:
+    Description: Leave default since only SSD supported currently.
+    AllowedValues:
+    - SSD
+    Default: SSD
+    Type: String
+
+  StorageCapacity:
+    Description: Specify a Storage Capacity between 1024 to 196608.
+    Default: 1024
+    Type: Number
+
+  ThroughputCapacity:
+    Description: Select Storage Throughput from 128, 256, 512, 1024 or 2048 MB/s.
+    AllowedValues:
+    - 128
+    - 256
+    - 512
+    - 1024
+    - 2048
+    Default: 256
+    Type: Number
+
+  RootVolumeSecurityStyle:
+    Description: Security Style of the Root volume. Either in [MIXED, UNIX, NTFS].
+    Type: String
+    Default: UNIX
+    AllowedValues:
+      - UNIX
+      - NTFS
+      - MIXED
+
+  SecurityStyle:
+    Description: Security style for the volume
+    Type: String
+    Default: UNIX
+    AllowedValues:
+      - UNIX
+      - NTFS
+      - MIXED
+
+  TieringPolicy:
+    Description: Tiering policy for the volume
+    Type: String
+    Default: AUTO
+    AllowedValues:
+      - SNAPSHOT_ONLY
+      - AUTO
+      - ALL
+      - NONE
+
+  VolumeSize:
+    Description: Volume Size
+    Type: Number
+    Default: 102400
+
+  StorageEfficiencyEnabled:
+    Description: Storage Efficiency 
+    Type: String
+    Default: True
+    AllowedValues:
+      - True
+      - False
+
+  LowFreeDataStorageCapacityThreshold:
+    ConstraintDescription: Must be an integer.
+    Default: 90
+    Description: Used storage capacity threshold (%)
+    Type: Number
+    MaxValue: 99
+    MinValue: 1
+
+
+Conditions:
+  MultiCluster: !Equals [ !Ref FlowType, MultiCluster]
+
+Resources: 
+  AWSCluster:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      Parameters:
+        VpcCIDR: !Ref VpcCIDR
+        VpcAz: !Ref VpcAz
+        VpcAzSecondary: !Ref VpcAzSecondary
+        LSFClusterName: !Join [ '-', [ !Ref LSFClusterName, "Region-B" ] ] 
+        SshSource: !Ref SshSource
+        SourceS3Bucket: !Ref SourceS3Bucket
+      TemplateURL: !Join [ '/', [ !Sub 'https://${SourceS3Bucket}.s3.${AWS::Region}.amazonaws.com', "eda-workshop-cloud-scale/deployment/00-eda-lsf-full-workshop-master.yaml" ] ]
+
+  SimulatedOnPremCluster:
+    Type: AWS::CloudFormation::Stack
+    Condition: MultiCluster
+    Properties:
+      Parameters:
+        VpcCIDR: !Ref VpcCIDROnPrem
+        VpcAz: !Ref VpcAz
+        VpcAzSecondary: !Ref VpcAzSecondary
+        LSFClusterName: !Join [ '-', [ !Ref LSFClusterName, "Region-A" ] ] 
+        SshSource: !Ref SshSource
+        SourceS3Bucket: !Ref SourceS3Bucket
+      TemplateURL: !Join [ '/', [ !Sub 'https://${SourceS3Bucket}.s3.${AWS::Region}.amazonaws.com', "eda-workshop-cloud-scale/deployment/00-eda-lsf-full-workshop-master.yaml" ] ]
+
+  
+  FSxFilesystem:
+    DependsOn: [ AWSCluster, SimulatedOnPremCluster ]
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      Parameters:
+        ParentStackName: !Ref LSFClusterName
+        StorageType: !Ref StorageType
+        StorageCapacity: !Ref StorageCapacity
+        ThroughputCapacity: !Ref ThroughputCapacity
+        RootVolumeSecurityStyle: !Ref RootVolumeSecurityStyle
+        SecurityStyle: !Ref SecurityStyle
+        TieringPolicy: !Ref TieringPolicy
+        VolumeSize: !Ref VolumeSize
+        StorageEfficiencyEnabled: !Ref StorageEfficiencyEnabled
+        LowFreeDataStorageCapacityThreshold: !Ref LowFreeDataStorageCapacityThreshold
+        OnPremPrivateSubnetId0:
+          Fn::GetAtt:
+          - SimulatedOnPremCluster
+          - Outputs.PrivateSubnet1
+        OnPremVpcId:
+          Fn::GetAtt:
+          - SimulatedOnPremCluster
+          - Outputs.VpcId
+        OnPremDefaultSecurityGroupId:
+          Fn::GetAtt:
+          - SimulatedOnPremCluster
+          - Outputs.OntapSG
+        OnPremPrivateRouteTable0:
+          Fn::GetAtt:
+          - SimulatedOnPremCluster
+          - Outputs.PrivateRouteTable
+        CloudVpcId:
+          Fn::GetAtt:
+          - AWSCluster
+          - Outputs.VpcId
+        CloudPrivateSubnetId:
+          Fn::GetAtt: 
+          - AWSCluster
+          - Outputs.PrivateSubnet1
+        CloudDefaultSecurityGroupId:
+          Fn::GetAtt:
+          - AWSCluster
+          - Outputs.OntapSG
+      TemplateURL: !Join [ '/', [ !Sub 'https://${SourceS3Bucket}.s3.${AWS::Region}.amazonaws.com', "eda-workshop-cloud-scale/deployment/02-netapp-fs.yaml" ] ]
+
+
+  OnPremLSFServiceStack:
+    DependsOn: FSxFilesystem
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      Parameters:
+        MasterInstanceType: !Ref MasterInstanceType
+        MasterServerAMI: !Ref MasterServerAMI
+        ComputeAMI: !Ref ComputeAMI
+        LSFClusterName: !Join [ '-', [ !Ref LSFClusterName, "Region-A" ] ] 
+        LSFInstallPath: !Ref LSFInstallPath
+        ScratchDir: !Ref ScratchDir
+        ProjectDir: !Ref ProjectDir
+        OnPremFileSystemId:
+          Fn::GetAtt:
+          - FSxFilesystem
+          - Outputs.OnPremFileSystemId
+        OnPremSvmId:
+          Fn::GetAtt:
+          - FSxFilesystem
+          - Outputs.OnPremSvmId
+        CloudFileSystemId:
+          Fn::GetAtt:
+          - FSxFilesystem
+          - Outputs.CloudFileSystemId
+        CloudSvmId:
+          Fn::GetAtt:
+          - FSxFilesystem
+          - Outputs.CloudSvmId
+        CustomerLSFInstallUri: !Ref CustomerLSFInstallUri
+        CustomerLSFBinsUri: !Ref CustomerLSFBinsUri
+        CustomerLSFBinsArchUri: !Ref CustomerLSFBinsArchUri 
+        CustomerLSFFixPackUri: !Ref CustomerLSFFixPackUri
+        CustomerLSFFixPackArchUri: !Ref CustomerLSFFixPackArchUri
+        CustomerLSFEntitlementUri: !Ref CustomerLSFEntitlementUri
+        AdminKeyPair: !Ref AdminKeyPair
+        DCVUserName: !Ref UserName
+        SourceS3Bucket: !Ref SourceS3Bucket
+      TemplateURL: !Join [ '/', [ !Sub 'https://${SourceS3Bucket}.s3.${AWS::Region}.amazonaws.com', "eda-workshop-cloud-scale/deployment/03-lsf-master.yaml" ] ]
+
+  CloudLSFServiceStack:
+    DependsOn: FSxFilesystem
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      Parameters:
+        MasterInstanceType: !Ref MasterInstanceType
+        MasterServerAMI: !Ref MasterServerAMI
+        ComputeAMI: !Ref ComputeAMI
+        #LSFClusterName: !Ref LSFClusterName
+        LSFClusterName: !Join [ '-', [ !Ref LSFClusterName, "Region-B" ] ] 
+        LSFInstallPath: !Ref LSFInstallPath
+        ScratchDir: !Ref ScratchDir
+        ProjectDir: !Ref ProjectDir
+        OnPremFileSystemId:
+          Fn::GetAtt:
+          - FSxFilesystem
+          - Outputs.OnPremFileSystemId
+        OnPremSvmId:
+          Fn::GetAtt:
+          - FSxFilesystem
+          - Outputs.OnPremSvmId
+        CloudFileSystemId:
+          Fn::GetAtt:
+          - FSxFilesystem
+          - Outputs.CloudFileSystemId
+        CloudSvmId:
+          Fn::GetAtt:
+          - FSxFilesystem
+          - Outputs.CloudSvmId
+        CustomerLSFInstallUri: !Ref CustomerLSFInstallUri
+        CustomerLSFBinsUri: !Ref CustomerLSFBinsUri
+        CustomerLSFBinsArchUri: !Ref CustomerLSFBinsArchUri 
+        CustomerLSFFixPackUri: !Ref CustomerLSFFixPackUri
+        CustomerLSFFixPackArchUri: !Ref CustomerLSFFixPackArchUri
+        CustomerLSFEntitlementUri: !Ref CustomerLSFEntitlementUri
+        AdminKeyPair: !Ref AdminKeyPair
+        DCVUserName: !Ref UserName
+        SourceS3Bucket: !Ref SourceS3Bucket
+      TemplateURL: !Join [ '/', [ !Sub 'https://${SourceS3Bucket}.s3.${AWS::Region}.amazonaws.com', "eda-workshop-cloud-scale/deployment/03-lsf-master.yaml" ] ]
+
+  OnPremLoginServerStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: OnPremLSFServiceStack
+    Properties:
+      Parameters:
+        LoginServerInstanceType: !Ref LoginServerInstanceType
+        LoginServerAMI: !Ref LoginServerAMI
+        LSFClusterName: !Join [ '-', [ !Ref LSFClusterName, "Region-A" ] ] 
+        AdminKeyPair: !Ref AdminKeyPair
+        LSFInstallPath: !Ref LSFInstallPath
+        ScratchDir: !Ref ScratchDir
+        ProjectDir: !Ref ProjectDir
+        DCVUserName: !Ref UserName
+        OnPremFileSystemId:
+          Fn::GetAtt:
+          - FSxFilesystem
+          - Outputs.OnPremFileSystemId
+        OnPremSvmId:
+          Fn::GetAtt:
+          - FSxFilesystem
+          - Outputs.OnPremSvmId
+        CloudFileSystemId:
+          Fn::GetAtt:
+          - FSxFilesystem
+          - Outputs.CloudFileSystemId
+        CloudSvmId:
+          Fn::GetAtt:
+          - FSxFilesystem
+          - Outputs.CloudSvmId
+        SourceS3Bucket: !Ref SourceS3Bucket
+      TemplateURL: !Join [ '/', [ !Sub 'https://${SourceS3Bucket}.s3.${AWS::Region}.amazonaws.com', "eda-workshop-cloud-scale/deployment/04-login-server-dcv.yaml" ] ]
+  
+  CloudLoginServerStack:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: CloudLSFServiceStack
+    Properties:
+      Parameters:
+        LoginServerInstanceType: !Ref LoginServerInstanceType
+        LoginServerAMI: !Ref LoginServerAMI
+        #LSFClusterName: !Ref LSFClusterName
+        LSFClusterName: !Join [ '-', [ !Ref LSFClusterName, "Region-B" ] ] 
+        AdminKeyPair: !Ref AdminKeyPair
+        LSFInstallPath: !Ref LSFInstallPath
+        ScratchDir: !Ref ScratchDir
+        ProjectDir: !Ref ProjectDir
+        DCVUserName: !Ref UserName
+        OnPremFileSystemId:
+          Fn::GetAtt:
+          - FSxFilesystem
+          - Outputs.OnPremFileSystemId
+        OnPremSvmId:
+          Fn::GetAtt:
+          - FSxFilesystem
+          - Outputs.OnPremSvmId
+        CloudFileSystemId:
+          Fn::GetAtt:
+          - FSxFilesystem
+          - Outputs.CloudFileSystemId
+        CloudSvmId:
+          Fn::GetAtt:
+          - FSxFilesystem
+          - Outputs.CloudSvmId
+        SourceS3Bucket: !Ref SourceS3Bucket
+      TemplateURL: !Join [ '/', [ !Sub 'https://${SourceS3Bucket}.s3.${AWS::Region}.amazonaws.com', "eda-workshop-cloud-scale/deployment/04-login-server-dcv.yaml" ] ]
+
+  MultiClusterNetworkUpdates:
+    Type: AWS::CloudFormation::Stack
+    DependsOn:
+    - OnPremLoginServerStack
+    - CloudLoginServerStack
+    Condition: MultiCluster
+    Properties:
+      Parameters:
+        LSFClusterName: !Ref LSFClusterName
+      TemplateURL: !Join [ '/', [ !Sub 'https://${SourceS3Bucket}.s3.${AWS::Region}.amazonaws.com', "eda-workshop-cloud-scale/deployment/05-multicluster-network-updates.yaml" ] ]
+
+
+  FlexCacheUpdates:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: MultiClusterNetworkUpdates
+    Condition: MultiCluster
+    Properties:
+      Parameters:
+        LSFClusterName: !Ref LSFClusterName
+        OnPremPrivateSubnetId0:
+          Fn::GetAtt:
+          - SimulatedOnPremCluster
+          - Outputs.PrivateSubnet1
+        CloudPrivateSubnetId0:
+          Fn::GetAtt:
+          - AWSCluster
+          - Outputs.PrivateSubnet1
+        OnPremDefaultSecurityGroupId:
+          Fn::GetAtt:
+          - SimulatedOnPremCluster
+          - Outputs.OntapSG
+        OnPremVpcId:
+          Fn::GetAtt:
+          - SimulatedOnPremCluster
+          - Outputs.VpcId
+        CloudVpcId:
+          Fn::GetAtt:
+          - AWSCluster
+          - Outputs.VpcId
+        OnPremOntapStorageVirtualMachine:
+          Fn::GetAtt:
+          - FSxFilesystem
+          - Outputs.OnPremSvmId
+        CloudOntapStorageVirtualMachine:
+          Fn::GetAtt:
+          - FSxFilesystem
+          - Outputs.CloudSvmId
+        OnPremOntapVolume:
+          Fn::GetAtt:
+          - FSxFilesystem
+          - Outputs.OnPremVol
+        RequestsLayer:
+          Fn::GetAtt:
+          - FSxFilesystem
+          - Outputs.RequestsLayer
+        CloudDefaultSecurityGroupId:
+          Fn::GetAtt:
+          - AWSCluster
+          - Outputs.OntapSG
+      TemplateURL: !Join [ '/', [ !Sub 'https://${SourceS3Bucket}.s3.${AWS::Region}.amazonaws.com', "eda-workshop-cloud-scale/deployment/08-flexcache.yaml" ] ]
+
+  SecretsManagerRotation:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: FlexCacheUpdates
+    Properties:
+      Parameters:
+        SecretsManagerId:
+          Fn::GetAtt:
+          - FSxFilesystem
+          - Outputs.SecretsManagerId
+        OnPremFileSystemId:
+          Fn::GetAtt:
+          - FSxFilesystem
+          - Outputs.OnPremFileSystemId
+        CloudFileSystemId:
+          Fn::GetAtt:
+          - FSxFilesystem
+          - Outputs.CloudFileSystemId
+        SourceS3Bucket: !Ref SourceS3Bucket
+      TemplateURL: !Join [ '/', [ !Sub 'https://${SourceS3Bucket}.s3.${AWS::Region}.amazonaws.com', "eda-workshop-cloud-scale/deployment/09-secret-rotation.yaml" ] ]
+
+
+  MultiClusterUpdateLSFConfigs:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: MultiClusterNetworkUpdates
+    Condition: MultiCluster
+    Properties:
+      Parameters:
+        SendClusterName: !Join [ '-', [ !Ref LSFClusterName, "Region-A" ] ]
+        RcvClusterName: !Join [ '-', [ !Ref LSFClusterName, "Region-B" ] ] 
+        LSFInstallPath: !Ref LSFInstallPath
+        SourceS3Bucket: !Ref SourceS3Bucket
+      TemplateURL: !Join [ '/', [ !Sub 'https://${SourceS3Bucket}.s3.${AWS::Region}.amazonaws.com', "eda-workshop-cloud-scale/deployment/06-multicluster-config-updates.yaml" ] ]
+
+  RebootLSFMasters:
+    Type: AWS::CloudFormation::Stack
+    DependsOn: [ FlexCacheUpdates, MultiClusterUpdateLSFConfigs ]
+    Condition: MultiCluster
+    Properties:
+      Parameters:
+        SendClusterName: !Join [ '-', [ !Ref LSFClusterName, "Region-A" ] ]
+        RcvClusterName: !Join [ '-', [ !Ref LSFClusterName, "Region-B" ] ] 
+      TemplateURL: !Join [ '/', [ !Sub 'https://${SourceS3Bucket}.s3.${AWS::Region}.amazonaws.com', "eda-workshop-cloud-scale/deployment/07-multicluster-reboot-after-config-updates.yaml" ] ]
+  

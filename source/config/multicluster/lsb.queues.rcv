@@ -1,0 +1,34 @@
+Begin Queue
+QUEUE_NAME              = verif
+DESCRIPTION             = Verification workload
+PRIORITY                = 15 
+USERS                   = all
+RC_ACCOUNT              = verif
+RC_HOSTS                = aws
+#HOSTS                   = all
+RES_REQ                 = select[aws]
+End Queue
+
+
+Begin Queue
+QUEUE_NAME              = sta
+DESCRIPTION             = STA workload
+PRIORITY                = 15 
+USERS                   = all
+RC_ACCOUNT              = sta
+RC_HOSTS                = aws
+#HOSTS                  = all
+RES_REQ                 = select[aws]
+End Queue
+
+Begin Queue
+QUEUE_NAME              = receiver
+DESCRIPTION             = Receiver queue in cloud environment
+PRIORITY                = 15 
+RCVJOBS_FROM		        = _OTHER_CLUSTER_NAME_
+USERS                   = all
+RC_ACCOUNT              = receiver
+RC_HOSTS                = aws
+#HOSTS                  = all
+RES_REQ                 = select[aws]
+End Queue

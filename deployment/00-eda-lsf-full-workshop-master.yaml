@@ -1,0 +1,60 @@
+
+AWSTemplateFormatVersion: 2010-09-09
+Description: |
+  Deploys a full EDA computing infrastructure that includes a new VPC, login server with
+  remote desktop, LSF master, EFS file system, and a shared NFS file system.
+  
+  This root stack launches a nested stack for each infrastructure component.
+  
+  **WARNING** This template creates AWS resources. 
+  You will be billed for the AWS resources used if you create a stack from this template.
+
+Parameters:
+  SshSource:
+    Type: String
+  LSFClusterName:
+    Type: String
+  VpcCIDR:
+    Type: String
+  VpcAz:
+    Type: String
+  VpcAzSecondary:
+    Type: String
+  SourceS3Bucket:
+    Type: String
+
+Resources:
+  NetworkStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      Parameters:
+        VpcCIDR: !Ref VpcCIDR
+        VpcAz: !Ref VpcAz
+        VpcAzSecondary: !Ref VpcAzSecondary
+        LSFClusterName: !Ref LSFClusterName
+        SshSource: !Ref SshSource
+      TemplateURL: !Join [ '/', [ !Sub 'https://${SourceS3Bucket}.s3.${AWS::Region}.amazonaws.com', "eda-workshop-cloud-scale/deployment/01-network.yaml" ] ]
+
+Outputs:
+  RootStackName:
+    Description: The name of the root CloudFormation stack
+    Value: !Ref 'AWS::StackName'
+    Export:
+      Name: !Join [ '-', [ !Ref LSFClusterName, "RootStackName" ] ]
+  PrivateSubnet1:
+    Value: !GetAtt NetworkStack.Outputs.PrivateSubnet1
+  PrivateSubnet2:
+    Value: !GetAtt NetworkStack.Outputs.PrivateSubnet2
+  PublicSubnet1:
+    Value: !GetAtt NetworkStack.Outputs.PublicSubnet1
+  PublicSubnet2:
+    Value: !GetAtt NetworkStack.Outputs.PublicSubnet2
+  VpcId:
+    Value: !GetAtt NetworkStack.Outputs.EnvVpc
+  OntapSG:
+    Value: !GetAtt NetworkStack.Outputs.DefaultSGId
+  PrivateRouteTable:
+    Value: !GetAtt NetworkStack.Outputs.PrivateRouteTable
+
+
+

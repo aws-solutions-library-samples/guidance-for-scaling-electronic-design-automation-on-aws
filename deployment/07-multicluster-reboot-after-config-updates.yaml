@@ -1,0 +1,99 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: |
+  This CloudFormation deploys a temporary server, updates the configuration and 
+  then shuts off the instance. 
+
+Metadata:
+  License:
+    Description: |
+      Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+
+      Permission is hereby granted, free of charge, to any person obtaining a copy of
+      this software and associated documentation files (the "Software"), to deal in
+      the Software without restriction, including without limitation the rights to
+      use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+      the Software, and to permit persons to whom the Software is furnished to do so.
+
+      THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+      IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+      FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+      COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+      IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+      CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.'
+
+Parameters:
+  SendClusterName:
+    Description: An environment name that will be prefixed to resource names
+    Type: String
+  RcvClusterName:
+    Description: Name of Cloud Environment in MultiCluster Mode
+    Type: String
+  
+Resources:
+  UpdateSendClusterLSFMaster:
+    Type: AWS::SSM::Association
+    Properties:
+      Name: AWS-RunShellScript
+      Targets:
+      - Key: InstanceIds
+        Values:
+        - Fn::ImportValue: !Join [ '-', [ !Ref SendClusterName,"LSFMasterInstanceId" ] ]
+      Parameters:
+        commands:
+        - chmod 755 /tmp/setup.sh
+        - source /tmp/setup.sh
+        - chmod 755 /tmp/fsx-setup.sh
+        - source /tmp/fsx-setup.sh
+        - mv $LSF_ENVDIR/lsf.conf $LSF_ENVDIR/lsf.conf.rc
+        - cp /tmp/lsf.conf $LSF_ENVDIR/lsf.conf
+        - reboot
+        workingDirectory:
+        - "/"
+  
+  UpdateRcvClusterLSFMaster:
+    Type: AWS::SSM::Association
+    Properties:
+      Name: AWS-RunShellScript
+      Targets:
+      - Key: InstanceIds
+        Values:
+        - Fn::ImportValue: !Join [ '-', [ !Ref RcvClusterName,"LSFMasterInstanceId" ] ]
+      Parameters:
+        commands:
+        - chmod 755 /tmp/fsx-setup.sh
+        - source /tmp/fsx-setup.sh
+        - reboot
+        workingDirectory:
+        - "/"
+
+  UpldeSendClusterLoginSever:
+    Type: AWS::SSM::Association
+    Properties:
+      Name: AWS-RunShellScript
+      Targets:
+      - Key: InstanceIds
+        Values:
+        - Fn::ImportValue: !Join [ '-', [ !Ref SendClusterName,"LoginServerInstanceId" ] ]
+      Parameters:
+        commands:
+        - chmod 755 /tmp/fsx-setup.sh
+        - source /tmp/fsx-setup.sh
+        - reboot
+        workingDirectory:
+        - "/"
+  
+  UpldeRcvClusterLoginSever:
+    Type: AWS::SSM::Association
+    Properties:
+      Name: AWS-RunShellScript
+      Targets:
+      - Key: InstanceIds
+        Values:
+        - Fn::ImportValue: !Join [ '-', [ !Ref RcvClusterName,"LoginServerInstanceId" ] ]
+      Parameters:
+        commands:
+        - chmod 755 /tmp/fsx-setup.sh
+        - source /tmp/fsx-setup.sh
+        - reboot
+        workingDirectory:
+        - "/"

@@ -1,0 +1,31 @@
+Begin Queue
+QUEUE_NAME              = verif
+DESCRIPTION             = Verification workload
+PRIORITY                = 15 
+USERS                   = all
+RC_ACCOUNT              = verif
+RC_HOSTS                = aws
+#HOSTS                   = all
+RES_REQ                 = select[aws]
+End Queue
+
+Begin Queue
+QUEUE_NAME              = sta
+DESCRIPTION             = STA workload
+PRIORITY                = 15 
+USERS                   = all
+#RC_ACCOUNT             = sta
+#RC_HOSTS               = aws
+HOSTS                   = all
+#RES_REQ                = select[aws]
+End Queue
+
+Begin Queue
+QUEUE_NAME              = sender
+DESCRIPTION             = Sender queue that forwards jobs to cloud
+PRIORITY                = 15 
+SNDJOBS_TO		          = receiver@_OTHER_CLUSTER_NAME_
+USERS                   = all
+HOSTS                   = all
+IMPT_JOBBKLG            = infinit
+End Queue

@@ -1,0 +1,538 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: |
+  This template deploys a VPC with a public and private subnet in one
+  Availability Zone, an Internet Gateway with a default route to it on the public subnet. 
+  The template deploys a NAT Gateway and a default route to it
+  in the private subnet.  Also, VPC security groups are created of the instances and EFS mount targets.
+  
+  **WARNING** This template creates AWS resources.
+  You will be billed for the AWS resources used if you create a stack from this template.
+
+Metadata:
+  Authors:
+    Description: Sunghwan Son (sungson@amazon.com)
+  License:
+    Description: |
+      Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+
+      Permission is hereby granted, free of charge, to any person obtaining a copy of
+      this software and associated documentation files (the "Software"), to deal in
+      the Software without restriction, including without limitation the rights to
+      use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+      the Software, and to permit persons to whom the Software is furnished to do so.
+
+      THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+      IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+      FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+      COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+      IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+      CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.'
+
+Parameters:
+  VpcAz:
+    Description: Choose an availability zone for this compute environment.
+    Type: 'AWS::EC2::AvailabilityZone::Name'
+  VpcAzSecondary:
+    Description: Choose an availability zone for this compute environment.
+    Type: 'AWS::EC2::AvailabilityZone::Name'
+  LSFClusterName:
+    Default: LSFCluster
+    Description: An environment name that will be prefixed to resource names
+    Type: String
+  VpcCIDR:
+    Description: Enter the IP range in CIDR notation for this VPC.  This should be a /16.
+    Type: String
+    AllowedPattern: "^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\\/(1[6-9]|2[0-8]))$"
+  SshSource:
+    Type: String
+    AllowedPattern: (\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})
+    ConstraintDescription: must be a valid IP CIDR range of the form x.x.x.x/x.
+
+
+Resources:
+
+  FlowLogRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: 'vpc-flow-logs.amazonaws.com'
+          Action: 'sts:AssumeRole'
+      Policies:
+      - PolicyName: 'flowlogs-policy'
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - 'logs:CreateLogStream'
+            - 'logs:PutLogEvents'
+            - 'logs:DescribeLogGroups'
+            - 'logs:DescribeLogStreams'
+            Resource: !GetAtt 'FlowLogGroup.Arn'
+
+  FlowLogGroup:
+    Type: 'AWS::Logs::LogGroup'
+    Properties:
+      RetentionInDays: 3
+
+  VPCId:
+    Type: 'AWS::EC2::VPC'
+    Properties:
+      CidrBlock: !Ref VpcCIDR
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${AWS::StackName}-${LSFClusterName}'
+
+  MockOnPremFlowLog:
+    Type: AWS::EC2::FlowLog
+    Properties:
+      DeliverLogsPermissionArn: !GetAtt FlowLogRole.Arn
+      LogGroupName: !Ref FlowLogGroup
+      ResourceId: !Ref VPCId
+      ResourceType: VPC
+      TrafficType: ALL
+
+  DefaultPrivateRoute1:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway1
+      RouteTableId: !Ref PrivateRouteTable
+
+  DefaultPublicRoute:
+    Type: 'AWS::EC2::Route'
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+      RouteTableId: !Ref PublicRouteTable
+
+  InternetGateway:
+    Type: 'AWS::EC2::InternetGateway'
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Ref LSFClusterName
+
+  InternetGatewayAttachment:
+    Type: 'AWS::EC2::VPCGatewayAttachment'
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref VPCId
+
+  NatGateway1:
+    Type: 'AWS::EC2::NatGateway'
+    Properties:
+      AllocationId: !GetAtt 
+        - NatGateway1EIP
+        - AllocationId
+      SubnetId: !Ref PublicSubnet1
+
+  NatGateway1EIP:
+    Type: 'AWS::EC2::EIP'
+    DependsOn: InternetGatewayAttachment
+    Properties:
+      Domain: vpc
+
+  NoIngressSecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      GroupDescription: Security group with no ingress rule
+      VpcId: !Ref VPCId
+      SecurityGroupEgress:
+        - CidrIp: 0.0.0.0/0
+          Description: Allows egress to all ports
+          IpProtocol: "-1"
+
+
+  # Explicitly retaining this route table. FSx can't delete
+  # Ontap without route table. 
+  PrivateRouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub '${LSFClusterName} Private Routes'
+      VpcId: !Ref VPCId
+
+  PrivateSubnet1:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      AvailabilityZone: !Ref VpcAz
+      CidrBlock: !Select [2, !Cidr [!Ref VpcCIDR, 4, 13]]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub '${LSFClusterName} Private Subnet'
+      VpcId: !Ref VPCId
+
+  PrivateSubnet2:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      AvailabilityZone: !Ref VpcAzSecondary
+      CidrBlock: !Select [3, !Cidr [!Ref VpcCIDR, 4, 13]]
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub '${LSFClusterName} Private Subnet 2'
+      VpcId: !Ref VPCId
+
+  PrivateSubnet1RouteTableAssociation:
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      SubnetId: !Ref PrivateSubnet1
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+
+  PrivateSubnet2RouteTableAssociation:
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      SubnetId: !Ref PrivateSubnet2
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+
+
+  PublicRouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    DependsOn: PublicSubnet1
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub '${LSFClusterName} Public Routes'
+      VpcId: !Ref VPCId
+
+  PublicSubnet1:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      AvailabilityZone: !Ref VpcAz
+      CidrBlock: !Select [0, !Cidr [!Ref VpcCIDR, 4, 13]]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${LSFClusterName} Public Subnet'
+      VpcId: !Ref VPCId
+  
+  PublicSubnet2:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      AvailabilityZone: !Ref VpcAzSecondary
+      CidrBlock: !Select [1, !Cidr [!Ref VpcCIDR, 4, 13]]
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${LSFClusterName} Public Subnet 2'
+      VpcId: !Ref VPCId
+
+  PublicSubnet1RouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet1
+  
+  PublicSubnet2RouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet2
+
+
+  LSFMasterSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "SG for LSF Master"
+      VpcId: !Ref VPCId
+      SecurityGroupEgress:
+        - CidrIp: 0.0.0.0/0
+          Description: Allows egress to all ports
+          IpProtocol: "-1"
+
+  # TODO: restrict to LSF port traffic
+
+
+  LSFMasterSGRule02:
+    Type: "AWS::EC2::SecurityGroupIngress"
+    Properties:
+      GroupId: !Ref LSFMasterSG
+      Description: "All traffic from LSF Compute Nodes"
+      IpProtocol: "-1"
+      SourceSecurityGroupId: !Ref LSFComputeNodeSG
+
+  LSFMasterSGRule03:
+    Type: "AWS::EC2::SecurityGroupIngress"
+    Properties:
+      GroupId: !Ref LSFMasterSG
+      Description: "All traffic from Login Servers"
+      IpProtocol: "-1"
+      SourceSecurityGroupId: !Ref LoginServerSG
+
+  LSFComputeNodeSG:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      GroupDescription: "SG for LSF Compute Nodes"
+      VpcId: !Ref VPCId
+      SecurityGroupEgress:
+        - CidrIp: 0.0.0.0/0
+          Description: Allows egress to all ports
+          IpProtocol: "-1"
+
+
+  LSFComputeNodeSGRule01:
+    Type: "AWS::EC2::SecurityGroupIngress"
+    Properties:
+      GroupId: !Ref LSFComputeNodeSG
+      Description: "All traffic from LSF Master" 
+      IpProtocol: "-1"
+      SourceSecurityGroupId: !Ref LSFMasterSG
+
+  LSFComputeNodeSGRule02:
+    Type: "AWS::EC2::SecurityGroupIngress"
+    Properties:
+      GroupId: !Ref LSFComputeNodeSG
+      Description: "All traffic from other LSF exec hosts" 
+      IpProtocol: "-1"
+      SourceSecurityGroupId: !Ref LSFComputeNodeSG
+
+  LSFComputeNodeSGRule03:
+    Type: "AWS::EC2::SecurityGroupIngress"
+    Properties:
+      GroupId: !Ref LSFComputeNodeSG
+      Description: "All traffic from Login Server" 
+      IpProtocol: "-1"
+      SourceSecurityGroupId: !Ref LoginServerSG
+
+  LoginServerSG:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      GroupDescription: "SG for Login Servers"
+      VpcId: !Ref VPCId
+      SecurityGroupEgress:
+        - CidrIp: 0.0.0.0/0
+          Description: Allows egress to all ports
+          IpProtocol: "-1"
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 22
+        ToPort: 22
+        Description: "Allow SSH access from user creating stack"
+        CidrIp: !Ref SshSource
+      - IpProtocol: tcp
+        FromPort: 8443
+        ToPort: 8443
+        Description: "Allow SSL access from user creating stack FOR DCV Client"
+        CidrIp: !Ref SshSource
+      - IpProtocol: "tcp"
+        FromPort: 2049
+        ToPort: 2049
+        Description: "Allow NFS from Ontap to the login server"
+        SourceSecurityGroupId: !Ref LSFOntapMountTargetSG
+
+  LSFEFSMountTargetSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "SG for EFS mount target"
+      VpcId: !Ref VPCId
+      SecurityGroupEgress:
+        - CidrIp: 0.0.0.0/0
+          Description: Allows egress to all ports
+          IpProtocol: "-1"
+
+
+  LSFEFSMountTargetSGRule01:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref LSFEFSMountTargetSG
+      Description: "NFS from LSF masters"
+      IpProtocol: "tcp"
+      FromPort: 2049
+      ToPort: 2049
+      SourceSecurityGroupId: !Ref LSFMasterSG
+
+  LSFEFSMountTargetSGRule02:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref LSFEFSMountTargetSG
+      Description: "NFS from compute nodes"
+      IpProtocol: "tcp"
+      FromPort: 2049
+      ToPort: 2049
+      SourceSecurityGroupId: !Ref LSFComputeNodeSG
+
+  LSFEFSMountTargetSGRule03:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref LSFEFSMountTargetSG
+      Description: "NFS from login servers"
+      IpProtocol: "tcp"
+      FromPort: 2049
+      ToPort: 2049
+      SourceSecurityGroupId: !Ref LoginServerSG
+
+  LSFOntapMountTargetSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "SG for Ontap mount target"
+      VpcId: !Ref VPCId
+      SecurityGroupEgress:
+        - CidrIp: 0.0.0.0/0
+          Description: Allows egress to all ports
+          IpProtocol: "-1"
+
+
+  LSFOntapMountTargetSGRule01:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref LSFOntapMountTargetSG
+      Description: "All Traffic from LSF masters"
+      IpProtocol: "-1"
+      SourceSecurityGroupId: !Ref LSFMasterSG
+
+  LSFOntapMountTargetSGRule02:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref LSFOntapMountTargetSG
+      Description: "All Traffic from compute nodes"
+      IpProtocol: "-1"
+      SourceSecurityGroupId: !Ref LSFComputeNodeSG
+
+  LSFOntapMountTargetSGRule03:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref LSFOntapMountTargetSG
+      Description: "All traffic from LoginServer"
+      IpProtocol: "-1"
+      SourceSecurityGroupId: !Ref LoginServerSG
+
+  S3VPCEndpoint:
+    Type: 'AWS::EC2::VPCEndpoint'
+    Properties:
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal: '*'
+            Action: "*"
+            Resource: "*"
+      RouteTableIds: 
+      - !Ref PublicRouteTable
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.s3' 
+      VpcId: !Ref VPCId
+  
+  IngressAllowSG:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Allow All for lambda with Netapp API
+      GroupId: !GetAtt VPCId.DefaultSecurityGroup
+      IpProtocol: -1
+      FromPort: 9443
+      ToPort: 9443
+      CidrIp: "0.0.0.0/0"
+
+
+Outputs:
+  NoIngressSecurityGroup:
+    Description: Security group with no ingress rule
+    Value: !Ref NoIngressSecurityGroup
+    
+  EnvVpc:
+    Description: The ID of the VPC
+    Value: !Ref VPCId
+    Export:
+      Name: !Join [ '-', [ !Ref LSFClusterName, "VPCId" ] ]
+
+  VpcCIDR:
+    Description: The ID of the VPC
+    Value: !Ref VpcCIDR
+    Export:
+      Name: !Join [ '-', [ !Ref LSFClusterName, "VpcCIDR" ] ]
+
+  PublicSubnet1:
+    Description: Public subnet exported for use by other stacks
+    Value:
+      Ref: PublicSubnet1
+    Export:
+      Name: !Join [ '-', [ !Ref LSFClusterName,"PublicSubnet" ] ]
+
+  PublicSubnet2:
+    Description: Public subnet exported for use by other stacks
+    Value:
+      Ref: PublicSubnet2
+    Export:
+      Name: !Join [ '-', [ !Ref LSFClusterName,"PublicSubnet2" ] ]
+
+  PrivateSubnet1:
+    Description: Private subnet export for use by other stacks
+    Value:
+      Ref: PrivateSubnet1
+    Export:
+      Name: !Join [ '-', [ !Ref LSFClusterName,"PrivateSubnet" ] ]
+
+  PrivateSubnet2:
+    Description: Private subnet export for use by other stacks
+    Value:
+      Ref: PrivateSubnet2
+    Export:
+      Name: !Join [ '-', [ !Ref LSFClusterName,"PrivateSubnet2" ] ]
+
+  LSFMasterSG:
+    Description: Security group for LSF Master
+    Value:
+      Ref: LSFMasterSG
+    Export:
+      Name: !Join [ '-', [ !Ref LSFClusterName,"LSFMasterSG" ] ]
+
+  LSFComputeNodeSG:
+    Description: Security group export for LSF Compute Nodes
+    Value:
+      Ref: LSFComputeNodeSG
+    Export:
+      Name: !Join [ '-', [ !Ref LSFClusterName,"LSFComputeNodeSG" ] ]
+
+  LoginServerSG:
+    Description: Security group export for Login Servers
+    Value:
+      Ref: LoginServerSG
+    Export:
+      Name: !Join [ '-', [ !Ref LSFClusterName,"LoginServerSG" ] ]
+
+  LSFEFSMountTargetSG:
+    Description: Security group export for LSF Compute Nodes
+    Value:
+      Ref: LSFEFSMountTargetSG
+    Export:
+      Name: !Join [ '-', [ !Ref LSFClusterName,"LSFEFSMountTargetSG" ] ]
+
+  LSFOntapMountTargetSG:
+    Description: Security group export for LSF Compute Nodes
+    Value:
+      Ref: LSFOntapMountTargetSG
+    Export:
+      Name: !Join [ '-', [ !Ref LSFClusterName,"LSFOntapMountTargetSG" ] ]
+
+  DefaultSGId:
+    Description: Default Security Group ID for VPC
+    Value: !GetAtt VPCId.DefaultSecurityGroup
+    Export:
+      Name: !Join [ '-', [ !Ref LSFClusterName, "DefaultSecurityGroup"]]
+
+  PublicRouteTable:
+    Description: Route Table for Public Subnet
+    Value:
+      Ref: PublicRouteTable
+    Export:
+      Name: !Join [ '-', [ !Ref LSFClusterName,"PublicRouteTable" ] ]
+
+  PrivateRouteTable:
+    Description: Route Table for Private Subnet
+    Value:
+      Ref: PrivateRouteTable
+    Export:
+      Name: !Join [ '-', [ !Ref LSFClusterName,"PrivateRouteTable" ] ]
+
+
+

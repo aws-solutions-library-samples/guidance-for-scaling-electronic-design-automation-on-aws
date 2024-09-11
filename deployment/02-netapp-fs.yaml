@@ -1,0 +1,325 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+
+Description:
+  Creates the Amazon FSx for NetApp ONTAP filesystems, storage virtual machines, volumes, cluster peering, vserver peering, and SnapMirror relationships for the workshop.
+
+Parameters:
+  ParentStackName:
+    Type: String
+  StorageType:
+    Type: String
+  StorageCapacity:
+    Type: Number
+  ThroughputCapacity:
+    Type: Number
+  RootVolumeSecurityStyle:
+    Type: String
+  SecurityStyle:
+    Type: String
+  TieringPolicy:
+    Type: String
+  VolumeSize:
+    Type: Number
+  StorageEfficiencyEnabled:
+    Type: String
+  LowFreeDataStorageCapacityThreshold:
+    Type: Number
+  OnPremDeploymentType:
+    Type: String
+    Default: SINGLE_AZ_1
+  CloudDeploymentType:
+    Type: String
+    Default: SINGLE_AZ_1
+  OnPremPrivateSubnetId0:
+    Description: OnPrem subnet ID shared from onprem-vpc stack
+    Type: String
+  OnPremVpcId:
+    Description: OnPrem VPC ID shared from onprem-vpc stack
+    Type: String
+  OnPremDefaultSecurityGroupId:
+    Description: OnPrem VPC Security Group shared from onprem-vpc stack
+    Type: String
+  OnPremPrivateRouteTable0:
+    Description: OnPrem VPC route table shared from onprem-vpc stack
+    Type: String
+  CloudVpcId:
+    Description: Cloud VPC ID shared from cloud-vpc stack
+    Type: String
+  CloudPrivateSubnetId:
+    Description: Cloud subnet ID shared from cloud-vpc stack
+    Type: String
+  CloudDefaultSecurityGroupId:
+    Description: Cloud VPC Security Group shared from cloud-vpc stack
+    Type: String
+
+Resources:
+  OnPremIntEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties: 
+      PrivateDnsEnabled: True
+      SecurityGroupIds: 
+        - !Ref OnPremDefaultSecurityGroupId
+      ServiceName: !Join [ '', [ 'com.amazonaws.', !Ref AWS::Region, '.lambda' ] ]
+      SubnetIds: 
+        - !Ref OnPremPrivateSubnetId0
+      VpcEndpointType: Interface
+      VpcId: !Ref OnPremVpcId
+
+  CloudIntEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties: 
+      PrivateDnsEnabled: True
+      SecurityGroupIds: 
+        - !Ref CloudDefaultSecurityGroupId
+      ServiceName: !Join [ '', [ 'com.amazonaws.', !Ref AWS::Region, '.lambda' ] ]
+      SubnetIds: 
+        - !Ref CloudPrivateSubnetId
+      VpcEndpointType: Interface
+      VpcId: !Ref CloudVpcId
+
+  FsxAdminPassword:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Join [ '', [ 'FSxadmin-', !Ref 'ParentStackName' ] ]
+      GenerateSecretString:
+        SecretStringTemplate: !Sub '{"username": "fsxadmin"}'
+        GenerateStringKey: password
+        PasswordLength: 10
+        ExcludePunctuation: True
+        ExcludeCharacters: "admin"
+
+  OnPremOntapFileSystem:
+    DependsOn: [ FsxAdminPassword ]
+    Type: "AWS::FSx::FileSystem"
+    Properties:
+      FileSystemType: "ONTAP"
+      StorageCapacity: !Ref StorageCapacity
+      StorageType: !Ref StorageType
+      SubnetIds: 
+        - !Ref OnPremPrivateSubnetId0
+      SecurityGroupIds: 
+        - !Ref OnPremDefaultSecurityGroupId
+      OntapConfiguration:
+        DeploymentType: !Ref OnPremDeploymentType
+        ThroughputCapacity: !Ref ThroughputCapacity
+        FsxAdminPassword: !Join
+              - ':'
+              - - '{{resolve:secretsmanager'
+                - !Ref FsxAdminPassword
+                - 'SecretString:password}}'
+      Tags:
+        - Key: "Name"
+          Value: "FSxNetAppOntap-Region-A"
+
+  OnPremOntapStorageVirtualMachine:
+    DependsOn: [ OnPremOntapFileSystem ]
+    Type: "AWS::FSx::StorageVirtualMachine"
+    Properties:
+        Name: "svm01-onprem"
+        FileSystemId: 
+          !Ref OnPremOntapFileSystem
+        RootVolumeSecurityStyle: !Ref RootVolumeSecurityStyle
+        Tags:
+          - Key: "Name"
+            Value: "svm01-onprem"
+
+  CloudOntapFileSystem:
+    DependsOn: [ FsxAdminPassword ]
+    Type: "AWS::FSx::FileSystem"
+    Properties:
+      FileSystemType: "ONTAP"
+      StorageCapacity: !Ref StorageCapacity
+      StorageType: !Ref StorageType
+      SubnetIds: 
+        - !Ref CloudPrivateSubnetId
+      SecurityGroupIds: 
+        - !Ref CloudDefaultSecurityGroupId
+      OntapConfiguration:
+        DeploymentType: !Ref CloudDeploymentType
+        ThroughputCapacity: !Ref ThroughputCapacity
+        FsxAdminPassword: !Join
+              - ':'
+              - - '{{resolve:secretsmanager'
+                - !Ref FsxAdminPassword
+                - 'SecretString:password}}'
+      Tags:
+        - Key: "Name"
+          Value: "FSxNetAppOntap-Region-B"
+
+  CloudOntapStorageVirtualMachine:
+    DependsOn: [ CloudOntapFileSystem ]
+    Type: "AWS::FSx::StorageVirtualMachine"
+    Properties:
+        Name: "svm01-cloud"
+        FileSystemId: 
+          !Ref CloudOntapFileSystem
+        RootVolumeSecurityStyle: !Ref RootVolumeSecurityStyle
+        Tags:
+          - Key: "Name"
+            Value: "svm01-cloud"
+
+  OnPremOntapVolume:
+    Type: "AWS::FSx::Volume"
+    Properties:
+      Name: "vol1_onprem"
+      OntapConfiguration:
+        JunctionPath: "/vol1_onprem"
+        SecurityStyle: !Ref SecurityStyle
+        SizeInMegabytes: !Ref VolumeSize
+        StorageEfficiencyEnabled: !Ref StorageEfficiencyEnabled
+        StorageVirtualMachineId: !Ref OnPremOntapStorageVirtualMachine
+        TieringPolicy:
+          Name: !Ref TieringPolicy
+      VolumeType: "ONTAP"
+
+  FSxRestAPILambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      ManagedPolicyArns:
+        - "arn:aws:iam::aws:policy/AWSCloudFormationReadOnlyAccess"
+        - "arn:aws:iam::aws:policy/CloudWatchLogsFullAccess"
+      Path: "/"
+      Policies:
+      - PolicyName: root
+        PolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+          - Effect: Allow
+            Action:
+            - logs:CreateLogGroup
+            - logs:CreateLogStream
+            - logs:PutLogEvents
+            Resource: arn:aws:logs:*:*:*
+          - Effect: Allow
+            Action:
+            - ec2:CreateNetworkInterface
+            - ec2:DeleteNetworkInterface
+            - ec2:DescribeNetworkInterfaces
+            Resource: "*"
+          - Effect: Allow
+            Action:
+            - fsx:AssociateFileSystemAliases
+            - fsx:CopyBackup
+            - fsx:CreateBackup
+            - fsx:CreateFileSystem
+            - fsx:CreateFileSystemFromBackup
+            - fsx:CreateSnapshot
+            - fsx:CreateStorageVirtualMachine
+            - fsx:CreateVolume
+            - fsx:CreateVolumeFromBackup
+            - fsx:DeleteBackup
+            - fsx:DeleteSnapshot
+            - fsx:DeleteStorageVirtualMachine
+            - fsx:DeleteVolume
+            - fsx:DescribeBackups
+            - fsx:DescribeFileSystemAliases
+            - fsx:DescribeFileSystems
+            - fsx:DescribeSnapshots
+            - fsx:DescribeStorageVirtualMachines
+            - fsx:DescribeVolumes
+            - fsx:DisassociateFileSystemAliases
+            - fsx:ListTagsForResource
+            - fsx:ManageBackupPrincipalAssociations
+            - fsx:ReleaseFileSystemNfsV3Locks
+            - fsx:RestoreVolumeFromSnapshot
+            - fsx:TagResource
+            - fsx:UntagResource
+            - fsx:UpdateFileSystem
+            - fsx:UpdateSnapshot
+            - fsx:UpdateStorageVirtualMachine
+            - fsx:UpdateVolume
+            Resource: "*"
+          - Effect: Allow
+            Action:
+            - secretsmanager:GetResourcePolicy
+            - secretsmanager:GetSecretValue
+            - secretsmanager:DescribeSecret
+            - secretsmanager:ListSecretVersionIds
+            Resource: !Sub 'arn:aws:secretsmanager:*:${AWS::AccountId}:secret:*'
+          - Effect: Allow
+            Action:
+            - secretsmanager:GetRandomPassword
+            - secretsmanager:ListSecrets
+            Resource: "*"
+
+  RequestsLayer:
+    DependsOn: [ OnPremIntEndpoint, CloudIntEndpoint ]
+    Type: AWS::Lambda::LayerVersion
+    Properties:   
+      CompatibleRuntimes: 
+        - python3.6
+        - python3.7
+        - python3.8
+        - python3.9
+      Content: 
+        S3Bucket: !Sub solution-references-${AWS::Region}
+        S3Key: 'fsx/ontap/requests-layer.zip'
+      Description: "Requests layer for Lambda"
+      LayerName: !Join [ '', [ 'RequestsLayer-', !Sub '${ParentStackName}' ] ]
+
+  OnPremVpcIdParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: OnPremVpc ID
+      Type: String
+      Name: OnPremVpcId
+      Value: !Sub '${OnPremVpcId}'
+
+  CloudVpcIdParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: CloudVpc ID
+      Type: String
+      Name: CloudVpcId
+      Value: !Sub '${CloudVpcId}'
+
+  FileSystemStackParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Description: CloudFormation stack name
+      Type: String
+      Name: fileSystemStack
+      Value: !Ref 'AWS::StackName'
+    
+
+Outputs:
+  OnPremFileSystemId:
+    Value: !Ref OnPremOntapFileSystem
+  OnPremSvmId:
+    Value: !Ref OnPremOntapStorageVirtualMachine
+  OnPremVol:
+    Value: !Ref OnPremOntapVolume
+  CloudFileSystemId:
+    Value: !Ref CloudOntapFileSystem
+  CloudSvmId:
+    Value: !Ref CloudOntapStorageVirtualMachine
+  OnPremVpcIdParameter:
+    Value: !GetAtt OnPremVpcIdParameter.Value
+    Export:
+      Name: !Join [ '-', [ !Sub '${OnPremVpcId}',"Parameter" ] ]
+  CloudVpcIdParameter:
+    Value: !GetAtt CloudVpcIdParameter.Value
+    Export:
+      Name: !Join [ '-', [ !Sub '${CloudVpcId}',"Parameter" ] ]
+  FSxRestAPILambdaExecutionRole:
+    Value: !GetAtt FSxRestAPILambdaExecutionRole.Arn
+    Export:
+      Name: !Join [ '-', [ 'FSxRestAPIRole', !Sub '${ParentStackName}' ] ]
+  FileSystemStackParameter:
+    Value: !GetAtt FileSystemStackParameter.Value
+    Export:
+      Name: !Join [ '-', [ !Sub '${ParentStackName}','FileSystemParameter']]
+  RequestsLayer:
+    Value: !Ref RequestsLayer
+  SecretsManagerId:
+    Value: !Ref FsxAdminPassword

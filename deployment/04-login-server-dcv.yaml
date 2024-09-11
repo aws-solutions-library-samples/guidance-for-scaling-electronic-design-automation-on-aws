@@ -1,0 +1,480 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: |
+  This CloudFormation deploys a login/remote desktop server.
+  This host will be a submission client to the LSF cluster.
+
+  **WARNING** This template creates AWS resources.
+  You will be billed for the AWS resources used if you create a stack from this template.
+
+Metadata:
+  License:
+    Description: |
+      Copyright 2019 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+
+      Permission is hereby granted, free of charge, to any person obtaining a copy of
+      this software and associated documentation files (the "Software"), to deal in
+      the Software without restriction, including without limitation the rights to
+      use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
+      the Software, and to permit persons to whom the Software is furnished to do so.
+
+      THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+      IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+      FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
+      COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
+      IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+      CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.'
+
+Mappings:
+  RegionMap:
+    us-east-1:  
+      CentOS75: ami-9887c6e7
+      FPGADev15: ami-0a71d776cea7922c1
+      ALinux2: ami-035be7bafff33b6b6
+    us-east-2:  
+      CentOS75: ami-0f2b4fc905b0bd1f1
+      FPGADev15: ami-0d3e8847d15d9ad72
+      ALinux2: ami-04328208f4f0cf1fe
+    us-west-1:
+      CentOS75: ami-074e2d6769f445be5
+      FPGADev15: ami-06fd3aab7a08e942d
+      ALinux2: ami-0799ad445b5727125
+    us-west-2:
+      CentOS75: ami-3ecc8f46
+      FPGADev15: ami-068ef4610de0dfb70
+      ALinux2: ami-032509850cf9ee54e
+    eu-west-1:           # Dublin
+      CentOS75: ami-3548444c
+      FPGADev15: ami-0521b6e4d86dad1f1
+      ALinux2: ami-0fad7378adf284ce0
+    ap-southeast-1:      # Singapore
+      CentOS75: ami-8e0205f2
+      FPGADev15: ami-0c4b3ff18b42e34a8
+      ALinux2: ami-04677bdaa3c2b6e24
+    ap-southeast-2:      # Sydney
+      CentOS75: ami-d8c21dba
+      FPGADev15: ami-000e49a33676e256a
+      ALinux2: ami-0c9d48b5db609ad6e
+    ap-northeast-2:      # Seoul
+      CentOS75: ami-06cf2a72dadf92410
+      FPGADev15: ami-0bbca7ce2aa871d41
+      ALinux2: ami-018a9a930060d38aa
+    ap-northeast-1:      # Tokyo
+      CentOS75: ami-045f38c93733dd48d
+      FPGADev15: ami-0f741966c7ef2c378
+      ALinux2: ami-0d7ed3ddb85b521a6
+
+Parameters:
+  AdminKeyPair:
+    Description: "Name of an existing EC2 KeyPair to enable SSH access to this instance."
+    Type: "AWS::EC2::KeyPair::KeyName"
+    AllowedPattern: ".+"
+  LoginServerInstanceType:
+    Description: "The desired instance type for this instance."
+    Type: "String"
+    Default: "m5.xlarge"
+    AllowedValues:
+      - t3.medium
+      - t3.xlarge
+      - m4.xlarge
+      - m4.2xlarge
+      - m5.xlarge
+      - m5.2xlarge
+      - c5d.9xlarge
+  LoginServerAMI:
+    Description: "This should be the same AMI that is used for the compute nodes."
+    Type: "String"
+    Default: ALinux2
+    AllowedValues:
+      - ALinux2
+      - CentOS75
+      - FPGADev15
+  LSFClusterName:
+    Default: LSFCluster
+    Description: An environment name that will be prefixed to resource names
+    Type: String
+  LSFInstallPath:
+    Description: "From NFS template. Shared NFS file system for installing LSF. Derive this from an Export or Parameter Store key."
+    Type: "String"
+    Default: "/tools/ibm/lsf"
+  FileSystemMountPoint:
+    Description: The local directory on which the NFS file system is mounted
+    Type: String
+    Default: /ontap-nfs
+    AllowedPattern: ^/.+
+  ScratchDir:
+    Description: The name for the runtime scratch data subdirectory
+    Type: String
+    Default: scratch
+    AllowedPattern: ^.+
+  ProjectDir:
+    Description: The name for the project design data subdirectory
+    Type: String
+    Default: proj
+    AllowedPattern: ^.+
+  DCVUserName:
+    Type: String
+    Default: simuser
+  OnPremFileSystemId:
+    Description: OnPrem File System ID
+    Type: String
+  OnPremSvmId:
+    Description: OnPrem Storage Virtual Machine ID
+    Type: String
+  CloudFileSystemId:
+    Description: Cloud File System ID
+    Type: String
+  CloudSvmId:
+    Description: Cloud Storage Virtual Machine ID
+    Type: String
+  SourceS3Bucket:
+    Description: url prefix for the bucket that has all the files for deploying this prototype. 
+    Type: String
+
+Resources:
+
+  DCVCredentialsSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub '${AWS::StackName}/DCVCredentialsSecret'
+      GenerateSecretString:
+        SecretStringTemplate: '{"username": "simuser"}'
+        GenerateStringKey: "password"
+        PasswordLength: 16
+        ExcludeCharacters: '"@/\'
+
+  InstanceWaitHandle:
+    Type: AWS::CloudFormation::WaitConditionHandle
+
+  InstanceWaitCondition:
+    DependsOn: LoginServerInstance
+    Properties:
+      Handle: !Ref 'InstanceWaitHandle'
+      Timeout: '3600'
+    Type: AWS::CloudFormation::WaitCondition
+
+  LoginServerInstance:
+    Type: "AWS::EC2::Instance"
+    Properties:
+      InstanceType: !Ref LoginServerInstanceType
+      ImageId:
+        Fn::FindInMap:
+        - RegionMap
+        - !Ref AWS::Region
+        - !Ref LoginServerAMI
+      SubnetId:
+          Fn::ImportValue: !Join [ '-', [ !Ref LSFClusterName,"PublicSubnet" ] ]
+      SecurityGroupIds:
+        - Fn::ImportValue: !Join [ '-', [ !Ref LSFClusterName,"LoginServerSG" ] ]
+      KeyName: !Ref AdminKeyPair
+      IamInstanceProfile: !Ref LoginServerInstanceProfile
+      Tags:
+        - 
+          Key: "Name"
+          Value: !Join [ '-', [ 'Login Server',!Ref LSFClusterName ] ]
+        - 
+          Key: "Cluster"
+          Value: !Ref LSFClusterName
+      UserData:
+        Fn::Base64: 
+          Fn::Sub:
+            - |
+              #!/bin/bash
+              # We dont' wanna store any passwords in the log files. 
+              set +x
+
+              # set -x
+              exec > >(tee /var/log/user-data.log|logger -t user-data ) 2>&1
+
+              echo "*** BEGIN LOGIN SERVER BOOTSTRAP ***"
+
+              export LSF_INSTALL_DIR="${LSFInstallPath}/${LSFClusterName}"
+              export LSF_INSTALL_DIR_ROOT="/`echo $LSF_INSTALL_DIR | cut -d / -f2`"
+
+              my_wait_handle="${InstanceWaitHandle}"
+
+              # OS Image
+              OSAMI="${LoginServerAMI}"
+
+              # Install SSM so we can use SSM Session Manager and avoid ssh logins.
+              yum install -q -y https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/linux_amd64/amazon-ssm-agent.rpm
+              systemctl enable amazon-ssm-agent
+              systemctl start amazon-ssm-agent
+
+              yum install epel-release -y
+              yum install jq -y
+
+              # Install boto3 and awscli v.2
+              pip3 install boto3
+              sudo yum install -y unzip
+              curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+              unzip awscliv2.zip
+              sudo ./aws/install
+              export PATH=/usr/local/bin:$PATH
+
+              ## Mount NFS file system for LSF install
+              ## and create working directories
+
+              # mount points
+              mkdir $LSF_INSTALL_DIR_ROOT
+              mkdir ${FileSystemMountPoint}
+              
+              # mount EFS file system
+              mount -t nfs4 -o rw,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2 ${LSFEFSFileSystemFQDN}:/ $LSF_INSTALL_DIR_ROOT
+
+              # create project and scratch directories
+              mkdir ${FileSystemMountPoint}/{${ScratchDir},${ProjectDir}} \
+                && chmod 777 ${FileSystemMountPoint}/{${ScratchDir},${ProjectDir}}
+
+              # add to fstab
+              echo "${LSFEFSFileSystemFQDN}:/ $LSF_INSTALL_DIR_ROOT nfs4 nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2 0 0" >> \
+                /etc/fstab
+              
+              # Set up Python3 environment for OpenLane
+              sudo yum install -y python3 python3-pip
+              python3 -m pip install --upgrade --no-cache-dir volare
+              sudo yum install -y git
+              sudo yum install -y yum-utils
+              sudo yum install docker
+              sudo pip3 install docker-compose
+
+              # Mount eda tools
+              LSF_CLUSTER_NAME="${LSFClusterName}"
+              if [[ $LSF_CLUSTER_NAME == *"Region-A"* ]]; then
+                cat << EOF >> /tmp/fsx-setup.sh
+                #!/bin/bash
+                export NFSENDPOINT=$(aws fsx describe-storage-virtual-machines --storage-virtual-machine-ids ${OnPremSvmId} --query StorageVirtualMachines[].Endpoints.Nfs.DNSName --output text)
+                cd /
+                mkdir /eda_tools
+                mkdir /scratch
+                sudo mount -t nfs \$NFSENDPOINT:/vol1_onprem /eda_tools
+                sudo mount -t nfs \$NFSENDPOINT:/scratch_cached /scratch
+                sudo chmod 777 /scratch
+                echo "\$NFSENDPOINT:/vol1_onprem /eda_tools nfs nfsvers=3,defaults 0 0" >> /etc/fstab
+                echo "\$NFSENDPOINT:/scratch_cached /scratch nfs nfsvers=3,defaults 0 0" >> /etc/fstab 
+                cd /eda_tools
+                wget https://www.python.org/ftp/python/3.8.4/Python-3.8.4.tgz
+                mkdir PDK
+                git clone --depth 1 https://github.com/The-OpenROAD-Project/OpenLane.git
+                cd Openlane
+                sed -i 's/$(HOME)\/.volare/\/eda_tools\/PDK\/.volare/' Makefile
+                yum install gcc-c++
+                yum install devtoolset-8-gcc devtoolset-8-gcc-c++
+                Python3 ./env.py local-install
+                make
+                sudo systemctl start docker
+                sudo groupadd docker
+                sudo usermod -aG docker simuser
+                aws s3 cp s3://${SourceS3Bucket}/eda-workshop-cloud-scale/assets/demo_script.sh /eda_tools/
+                chmod 755 /eda_tools/demo_script.sh
+              EOF
+              else
+                cat << EOF >> /tmp/fsx-setup.sh
+                #!/bin/bash
+                export CloudNFSENDPOINT=$(aws fsx describe-storage-virtual-machines --storage-virtual-machine-ids ${CloudSvmId} --query StorageVirtualMachines[].Endpoints.Nfs.DNSName --output text) 
+                cd /
+                mkdir /eda_tools
+                mkdir /scratch
+                sudo mount -t nfs \$CloudNFSENDPOINT:/tool_cached /eda_tools
+                sudo mount -t nfs \$CloudNFSENDPOINT:/vol1_cloud /scratch
+                sudo chmod 777 /scratch
+                echo "\$CloudNFSENDPOINT:/tool_cached /eda_tools nfs nfsvers=3,defaults 0 0" >> /etc/fstab
+                echo "\$CloudNFSENDPOINT:/vol1_cloud /scratch nfs nfsvers=3,defaults 0 0" >> /etc/fstab 
+                sudo systemctl start docker
+                sudo groupadd docker
+                sudo usermod -aG docker simuser
+              EOF
+              fi
+
+              # Set up LSF envirionment
+              echo "source $LSF_INSTALL_DIR/conf/profile.lsf" > /etc/profile.d/lsf.sh
+
+              ### Install DCV ###
+              echo "Installing DCV..."
+
+              user_name=${DCVUserName}
+              user_pass=$(aws secretsmanager get-secret-value --secret-id ${DCVCredentialsSecret} --output text --query 'SecretString' | jq -r .password)
+
+              LOGIN_SERVER_AMI="${LoginServerAMI}"
+              if [[ $LOGIN_SERVER_AMI == "ALinux2" ]]; then
+                function install_prereqs {
+                  sudo yum -y upgrade
+                  sudo yum -y install gdm gnome-session gnome-classic-session gnome-session-xsession         
+                  sudo yum -y install xorg-x11-server-Xorg xorg-x11-fonts-Type1 xorg-x11-drivers
+                  sudo yum -y install gnome-terminal gnu-free-fonts-common gnu-free-mono-fonts gnu-free-sans-fonts gnu-free-serif-fonts
+                }
+              else
+                function install_prereqs {
+                  sudo yum -y upgrade                
+                  sudo yum -y groupinstall "GNOME Desktop"
+                }
+              fi
+              
+
+              function install_dcv {
+                mkdir /tmp/dcv-inst.d
+                pushd /tmp/dcv-inst.d
+                sudo rpm --import https://d1uj6qtbmh3dt5.cloudfront.net/NICE-GPG-KEY
+                wget https://d1uj6qtbmh3dt5.cloudfront.net/2023.1/Servers/nice-dcv-2023.1-16388-el7-x86_64.tgz
+                tar xvf nice-dcv-2023.1-16388-el7-x86_64.tgz
+                cd nice-dcv-2023.1-16388-el7-x86_64/
+                yum -y install nice-dcv-server-2023.1.16388-1.el7.x86_64.rpm \
+                               nice-xdcv-2023.1.565-1.el7.x86_64.rpm \
+                               nice-dcv-web-viewer-2023.1.16388-1.el7.x86_64.rpm \
+                               nice-dcv-simple-external-authenticator-2023.1.228-1.el7.x86_64.rpm
+                popd
+              }
+
+              function add_user {
+
+                user_name=${!user_name}
+                user_pass=${!user_pass}
+
+                groupadd ${!user_name}
+                useradd -u 1501 -m -g ${!user_name} ${!user_name} 
+                echo "${!user_name}:${!user_pass}" | chpasswd
+                echo "Created user ${!user_name}"
+
+              }
+
+              function cr_post_reboot {
+
+                if [[ ! -d /opt/dcv-install ]]; then
+                  mkdir /opt/dcv-install
+                fi
+
+              cat << EOF > /opt/dcv-install/post_reboot.sh
+              #!/usr/bin/env bash
+
+              function stop_disable_svc() {
+                systemctl stop \$1
+                systemctl disable \$1
+              }
+
+              #stop_disable_svc firewalld
+              #stop_disable_svc libvirtd
+              systemctl isolate multi-user.target
+              systemctl isolate graphical.target
+              DISPLAY=:0 XAUTHORITY=\$(ps aux | grep "X.*\\-auth" | grep -v grep | awk -F"-auth " '{print \$2}' | awk '{print \$1}') xhost | grep "SI:localuser:dcv$"
+              dcv create-session --type=virtual --owner ${!user_name} --user ${!user_name} virt
+              dcv list-sessions
+
+              my_wait_handle="${!my_wait_handle}"
+
+              if [[ ! -f /tmp/wait-handle-sent ]]; then
+                exit 0
+              else
+                wait_handle_status=\$(cat /tmp/wait-handle-sent)
+                if [[ \${!wait_handle_status} == "true" ]]; then
+                  rm /tmp/wait-handle-sent
+                  exit 0
+                elif [[ \${!wait_handle_status} == "false" && \${!my_wait_handle} != "" ]] ; then
+                  echo "Sending success to wait handle"
+                  curl -X PUT -H 'Content-Type:' --data-binary '{ "Status" : "SUCCESS",  "Reason" : "instance launched",  "UniqueId" : "inst001",  "Data" : "instance launched."}' "\${!my_wait_handle}"
+                  echo "true" > /tmp/wait-handle-sent
+                fi
+              fi
+
+              EOF
+
+              chmod 744 /opt/dcv-install/post_reboot.sh
+
+              }
+
+              function cr_service {
+
+              cat << EOF > /etc/systemd/system/post-reboot.service
+              [Unit]
+              Description=Post reboot service
+
+              [Service]
+              ExecStart=/opt/dcv-install/post_reboot.sh
+
+              [Install]
+              WantedBy=multi-user.target
+              EOF
+
+              chmod 664 /etc/systemd/system/post-reboot.service
+              systemctl daemon-reload
+              systemctl enable post-reboot.service
+
+              }
+
+              function stop_disable_svc() {
+                systemctl stop $1
+                systemctl disable $1
+              }
+
+              function main {
+
+              install_prereqs
+              install_dcv
+              add_user
+              cr_post_reboot
+              cr_service
+
+              systemctl enable dcvserver
+              echo "false" > /tmp/wait-handle-sent
+              stop_disable_svc firewalld
+              stop_disable_svc libvirtd
+              echo "*** END LOGIN SERVER BOOTSTRAP. REBOOTING... ***"
+              reboot
+
+              }
+
+              main
+
+              ### End Install DCV ###
+              
+            -
+              LSFEFSFileSystemFQDN:
+                Fn::ImportValue: !Join [ '-', [ !Ref LSFClusterName,"LSFEFSFileSystemFQDN" ] ]
+
+  LoginServerRole:
+      Type: "AWS::IAM::Role"
+      Properties:
+        Path: "/"
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - 
+              Effect: Allow
+              Principal:
+                Service:
+                - "ec2.amazonaws.com"
+              Action:
+              - "sts:AssumeRole"
+        ManagedPolicyArns:
+          - "arn:aws:iam::aws:policy/CloudWatchLogsFullAccess"
+          - "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+          - 'arn:aws:iam::aws:policy/SecretsManagerReadWrite'
+          - 'arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess'
+          - 'arn:aws:iam::aws:policy/AmazonFSxReadOnlyAccess'
+        Policies:
+          - PolicyName: DcvLicenseBucketPolicy
+            PolicyDocument:
+              Version: 2012-10-17
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - s3:GetObject
+                  Resource: arn:aws:s3:::dcv-license.us-east-1/*
+
+  LoginServerInstanceProfile:
+    Type: "AWS::IAM::InstanceProfile"
+    Properties:
+      Path: "/"
+      Roles:
+        - !Ref LoginServerRole
+
+Outputs:
+  LoginServerPublicIp:
+    Description: Login Server Public IP
+    Value: !GetAtt LoginServerInstance.PublicIp
+  DCVConnectionLink:
+    Description: Connect to the DCV Remote Desktop with this URL
+    Value: !Sub 'https://${LoginServerInstance.PublicIp}:8443'
+  LoginServerInstanceId:
+    Description: Login Serve Instance Id
+    Value: !Ref LoginServerInstance
+    Export:
+      Name: !Join [ '-', [ !Ref LSFClusterName,"LoginServerInstanceId"] ]

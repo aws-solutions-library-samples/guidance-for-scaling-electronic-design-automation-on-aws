@@ -1,0 +1,164 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description:
+  This module will make a Updates to Security Groups and Route Tables
+
+Parameters:
+  LSFClusterName:
+    Description: Name Of the Cluster
+    Type: String
+
+
+Resources:
+
+  TGW:
+    Type: AWS::EC2::TransitGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Join [ '-', [ !Ref LSFClusterName,"tgw" ] ]
+
+  TGWAttachmentToOnPremVPC:
+    Type: AWS::EC2::TransitGatewayAttachment
+    Properties:
+      TransitGatewayId: !Ref TGW
+      SubnetIds: 
+        - Fn::ImportValue: !Join [ '-', [ !Ref LSFClusterName,"Region-B-PrivateSubnet" ] ]
+        - Fn::ImportValue: !Join [ '-', [ !Ref LSFClusterName,"Region-B-PrivateSubnet2" ] ]
+      Tags:
+        - Key: Name
+          Value: !Ref LSFClusterName      
+      VpcId: 
+        Fn::ImportValue: !Join [ '-', [ !Ref LSFClusterName,"Region-B-VPCId" ] ]
+
+        
+  TGWAttachmentToCloudVPC:
+    Type: AWS::EC2::TransitGatewayAttachment
+    Properties:
+      TransitGatewayId: !Ref TGW
+      SubnetIds: 
+        - Fn::ImportValue: !Join [ '-', [ !Ref LSFClusterName,"Region-A-PrivateSubnet" ] ]
+        - Fn::ImportValue: !Join [ '-', [ !Ref LSFClusterName,"Region-A-PrivateSubnet2" ] ]
+      Tags:
+        - Key: Name
+          Value: !Join ['', ['TGW-Cloud-Attachment | ', !Ref 'AWS::StackName'] ]
+      VpcId: 
+        Fn::ImportValue: !Join [ '-', [ !Ref LSFClusterName,"Region-A-VPCId" ] ]
+  
+
+  UpdateOnPremLoginServerSG:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Allow access Login server from Region A
+      CidrIp:
+        Fn::ImportValue: !Join [ '-', [ !Ref LSFClusterName,"Region-A-VpcCIDR" ] ]
+      IpProtocol: -1
+      GroupId: 
+        Fn::ImportValue: !Join [ '-', [ !Ref LSFClusterName,"Region-B-LoginServerSG" ] ]
+
+  UpdateCloudLoginServerSG:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Allow access Login server from Region B 
+      CidrIp:
+        Fn::ImportValue: !Join [ '-', [ !Ref LSFClusterName,"Region-B-VpcCIDR" ] ]
+      IpProtocol: -1
+      GroupId: 
+        Fn::ImportValue: !Join [ '-', [ !Ref LSFClusterName,"Region-A-LoginServerSG" ] ]
+
+  UpdateOnPremLSFMasterSG:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Allow access LSF Master server from Region A
+      CidrIp:
+        Fn::ImportValue: !Join [ '-', [ !Ref LSFClusterName,"Region-A-VpcCIDR" ] ]
+      IpProtocol: -1
+      GroupId: 
+        Fn::ImportValue: !Join [ '-', [ !Ref LSFClusterName,"Region-B-LSFMasterSG" ] ]
+
+  UpdateCloudLSFMasterSG:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Allow access LSF Master server from Region B
+      CidrIp:
+        Fn::ImportValue: !Join [ '-', [ !Ref LSFClusterName,"Region-B-VpcCIDR" ] ]
+      IpProtocol: -1
+      GroupId: 
+        Fn::ImportValue: !Join [ '-', [ !Ref LSFClusterName,"Region-A-LSFMasterSG" ] ]
+
+
+  UpdateOnpremOntapSecurityGroup:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Allow access FSxN file system from Region B
+      CidrIp:
+        Fn::ImportValue: !Join [ '-', [ !Ref LSFClusterName,"Region-B-VpcCIDR" ] ]
+      IpProtocol: -1
+      GroupId: 
+        Fn::ImportValue: !Join [ '-', [ !Ref LSFClusterName,"Region-A-LSFOntapMountTargetSG" ] ]
+
+  UpdateCloudOntapSecurityGroup:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Description: Allow access FSxN file system from Region A
+      CidrIp:
+        Fn::ImportValue: !Join [ '-', [ !Ref LSFClusterName,"Region-A-VpcCIDR" ] ]
+      IpProtocol: -1
+      GroupId: 
+        Fn::ImportValue: !Join [ '-', [ !Ref LSFClusterName,"Region-B-LSFOntapMountTargetSG" ] ]
+
+  # TGW needs to be attached to a VPC before you can update the routes. 
+  UpdateOnPremPrivateRT:
+    Type: AWS::EC2::Route
+    DependsOn: TGWAttachmentToOnPremVPC
+    Properties:
+      DestinationCidrBlock:
+        Fn::ImportValue: !Join [ '-', [ !Ref LSFClusterName,"Region-A-VpcCIDR" ] ]
+      TransitGatewayId: !Ref TGW
+      RouteTableId:
+        Fn::ImportValue: !Join [ '-', [ !Ref LSFClusterName,"Region-B-PrivateRouteTable" ] ]
+ 
+
+  # TGW needs to be attached to a VPC before you can update the routes. 
+  UpdateCloudPrivateRT:
+    Type: AWS::EC2::Route
+    DependsOn: TGWAttachmentToCloudVPC
+    Properties:
+      DestinationCidrBlock:
+        Fn::ImportValue: !Join [ '-', [ !Ref LSFClusterName,"Region-B-VpcCIDR" ] ]
+      TransitGatewayId: !Ref TGW
+      RouteTableId:
+        Fn::ImportValue: !Join [ '-', [ !Ref LSFClusterName,"Region-A-PrivateRouteTable" ] ]
+
+
+
+  # TGW needs to be attached to a VPC before you can update the routes. 
+  UpdateOnPremPublicRT:
+    Type: AWS::EC2::Route
+    DependsOn: TGWAttachmentToOnPremVPC
+    Properties:
+      DestinationCidrBlock:
+        Fn::ImportValue: !Join [ '-', [ !Ref LSFClusterName,"Region-A-VpcCIDR" ] ]
+      TransitGatewayId: !Ref TGW
+      RouteTableId:
+        Fn::ImportValue: !Join [ '-', [ !Ref LSFClusterName,"Region-B-PublicRouteTable" ] ]
+
+  # TGW needs to be attached to a VPC before you can update the routes. 
+  UpdateCloudPublicRT:
+    Type: AWS::EC2::Route
+    DependsOn: TGWAttachmentToCloudVPC
+    Properties:
+      DestinationCidrBlock:
+        Fn::ImportValue: !Join [ '-', [ !Ref LSFClusterName,"Region-B-VpcCIDR" ] ]
+      TransitGatewayId: !Ref TGW
+      RouteTableId:
+        Fn::ImportValue: !Join [ '-', [ !Ref LSFClusterName,"Region-A-PublicRouteTable" ] ]
+
+Outputs:
+  TGWId:
+    Description: A Reference to the created TGW
+    Value: !Ref TGW
+    Export:
+      Name: !Join [ '-', [ !Ref LSFClusterName,"tgw" ] ]
+
+  

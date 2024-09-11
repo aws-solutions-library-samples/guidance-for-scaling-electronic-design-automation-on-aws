@@ -1,0 +1,38 @@
+{
+    "OnDemandOptions":{
+       "AllocationStrategy": "lowest-price"
+    },
+    "SpotOptions":{
+       "AllocationStrategy": "price-capacity-optimized",
+       "InstanceInterruptionBehavior": "terminate"
+    },
+    "LaunchTemplateConfigs":[
+       {
+          "LaunchTemplateSpecification":{
+             "LaunchTemplateId": "%CFN_LAUNCH_TEMPLATE%",
+             "Version":"1"
+          },
+          "Overrides":[
+            {
+               "InstanceType":"c5.xlarge",
+               "SubnetId":"%CFN_COMPUTE_NODE_SUBNET1%",
+               "WeightedCapacity":1,
+               "Priority":2
+            },
+            {
+                "InstanceType":"c5.2xlarge",
+                "SubnetId":"%CFN_COMPUTE_NODE_SUBNET2%",
+                "WeightedCapacity":2,
+                "Priority":4
+            }
+          ]
+  }],
+ 
+    "TargetCapacitySpecification":{
+       "TotalTargetCapacity": $LSF_TOTAL_TARGET_CAPACITY,
+       "OnDemandTargetCapacity": $LSF_ONDEMAND_TARGET_CAPACITY,
+       "SpotTargetCapacity": $LSF_SPOT_TARGET_CAPACITY,
+       "DefaultTargetCapacityType": "spot"
+    },
+    "Type":"instant"
+ }

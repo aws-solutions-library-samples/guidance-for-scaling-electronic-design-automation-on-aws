@@ -1,0 +1,29 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description:
+  This module will make an update to the public route table so that the login server can access and mount the ontap FS
+
+Parameters:
+  PublicRouteTable:
+    Description: The public route table that needs updatd
+    Type: String
+
+  OntapENI:
+    Description: The elastic network interface FSX creates
+    Type: String
+
+  OntapAddrssRange:
+    Description: THe IP address range that Ontap's floating IP address ranges can fall in 
+    Type: String
+
+Resources:
+  # We need to create a route in the public route table so that 
+  # the login server can have ssh access to the Ontap Mgmt Endpoint
+  UpdateOnPremPrivateRT:
+    Type: AWS::EC2::Route
+    Properties:
+      NetworkInterfaceId: !Ref OntapENI
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: !Ref OntapAddrssRange
+
+  
