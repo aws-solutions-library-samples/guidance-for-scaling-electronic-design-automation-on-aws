@@ -160,6 +160,7 @@ In addition, `LICENSE.txt`, `NOTICE.txt`, and `README.md` files will be located 
 10. On the **Specify stack** details page, specify the Stack name.
 
 11. In **MultiCluster mode** deployment, review the parameters for the template. Provide values for the following parameters in the table below. For all other parameters, it is recommended that you keep the default settings, but you can customize them as necessary.
+
 | **Parameter**            | **Notes**                                                                                                                                  |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
 | SourceS3Bucket           | S3 Bucket where source code for **Cloud Scale for EDA** is stored.                                                                         |
