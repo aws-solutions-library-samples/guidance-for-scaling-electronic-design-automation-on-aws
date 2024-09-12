@@ -59,11 +59,11 @@ The IBM Spectrum LSF software is not provided in this workshop; you will need to
 
 #### 3. Subscribe the CentOS 7 AMI
 
-The Official CentOS 7 x86_64 HVM image that has been built with a minimal profile, suitable for use in HVM instance types only. The image contains just enough packages to run within AWS, bring up an SSH Server and allow users to login. [Official CentOS 7 x86_64 HVM AMI](https://aws.amazon.com/marketplace/pp/B00O7WM7QW) 
+The Official CentOS 7 x86_64 HVM image that has been built with a minimal profile, suitable for use in HVM instance types only. The image contains just enough packages to run within AWS, bring up an SSH Server and allow users to login.
 
 Sign in to your AWS account, and follow these instructions to subscribe:
 
-1. Open the page for the [CentOS 7 (x86_64) - with Updates HVM](https://aws.amazon.com/marketplace/pp/B00O7WM7QW) AMI in AWS Marketplace, and then choose Continue to Subscribe.
+1. Open the page for the [CentOS 7 (x86_64) - with Updates HVM AMI](https://aws.amazon.com/marketplace/pp/B00O7WM7QW) in AWS Marketplace, and then choose Continue to Subscribe.
 2. Review the terms and conditions for software usage, and then choose Accept Terms. You will get a confirmation page, and an email confirmation will be sent to the account owner. For detailed subscription instructions, see the [AWS Marketplace documentation](https://aws.amazon.com/marketplace/help/200799470).
 3. When the subscription process is complete, exit out of AWS Marketplace without further action. Do not click Continue to Launch; the workshop CloudFormation templates will deploy the AMI for you.
 4. Verify the subscriptions in the [Marketplace dashboard](https://console.aws.amazon.com/marketplace/home) within the AWS Console.
@@ -74,7 +74,7 @@ Sign in to your AWS account, and follow these instructions to subscribe:
 Make sure that at least one Amazon EC2 key pair exists in your AWS account in the region where you are planning to deploy the tutorial. Make note of the key pair name. You’ll be prompted for this information during deployment. To create a key pair, follow the instructions in the AWS documentation. If you’re deploying the tutorial for testing or proof-of-concept purposes, we recommend that you create a new key pair instead of specifying a key pair that’s already being used by a production instance.
 
 ### Operating System 
-This guidance based on two linux system(CentOS 7 and Amazon Linux 2)for deploying the EDA environment. To use CentOS 7, it requred to susbscribe the CentOS 7 AMI. [Subscition] (#subscribe-the-centos-7-ami)
+This guidance based on two linux system(CentOS 7 and Amazon Linux 2)for deploying the EDA environment. To use CentOS 7, it requred to susbscribe the CentOS 7 AMI. [Subscription](https://aws.amazon.com/marketplace/pp/B00O7WM7QW)
 
 ### Third-party tools
 Download the following packages from IBM:
@@ -121,14 +121,6 @@ This deployment includes **Amazon Elastic File System** (EFS) and **Amazon FSx f
 
 ## Deployment Steps
 
-Deployment steps must be numbered, comprehensive, and usable to customers at any level of AWS expertise. The steps must include the precise commands to run, and describe the action it performs.
-
-* All steps must be numbered.
-* If the step requires manual actions from the AWS console, include a screenshot if possible.
-* The steps must start with the following command to clone the repo. ```git clone xxxxxxx```
-* If applicable, provide instructions to create the Python virtual environment, and installing the packages using ```requirement.txt```.
-* If applicable, provide instructions to capture the deployed resource ARN or ID using the CLI command (recommended), or console action.
-
 1. Sign in to your AWS account at [https://aws.amazon.com/](https://aws.amazon.com) with an IAM user role that includes full administrative permissions.
 2. Select the region where your EC2 key pair exists.
 3. Create S3 Bucket. The CloudFormation templates for this workshop reads **IBM Spectrum LSF** and **Cloud Scale for EDA** source files from an [Amazon S3](https://aws.amazon.com/s3/) bucket in your AWS account. You must create a new bucket for this workshop. You can review instructions on how to [create a new S3 bucket](https://docs.aws.amazon.com/AmazonS3/latest/userguide/create-bucket-overview.html) in the AWS documentation.
@@ -150,8 +142,8 @@ In addition, `LICENSE.txt`, `NOTICE.txt`, and `README.md` files will be located 
 6. Upload LSF Package to S3 bucket. Upload the **IBM Spectrum LSF** binaries and entitlement files into the same S3 bucket. The LSF files retrieved from S3 by the **Cloud Scale** CloudFormation code.
 
 7. Go to the **Amazon S3** console and click on the S3 bucket you created above to descend into the folder.
-   1. Click on `deployment`.
-   2. Click on the checkbox next to `run-eda-workshop.yaml` and click the **Copy URL** button towards the top of the page.
+   * Click on `deployment`.
+   * Click on the checkbox next to `run-eda-workshop.yaml` and click the **Copy URL** button towards the top of the page.
 
 8. Go to the CloudFormation console from the AWS Management Console in your account and Click on **Create Stack with New Resources.**
  
