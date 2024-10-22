@@ -88,13 +88,13 @@ Metadata:
       LSFInstallPath:
         default: LSF install path
       ScratchDir:
-        default: Scratch subdirectory
+        default: Scratch directory
       ProjectDir:
-        default: Project subdirectory
+        default: Project directory
       VpcCIDR:
-        default: VPC CIDR range
+        default: Region-B(Cloud) VPC CIDR range
       VpcCIDROnPrem:
-        default: SimulatedOnPrem VPC CIDR range
+        default: Region-A(On-Prem) VPC CIDR range
       VpcAz:
         default: Availability zone
       VpcAzSecondary:
@@ -102,15 +102,15 @@ Metadata:
       CustomerLSFInstallUri:
         default: LSF 10.1 install script package
       CustomerLSFBinsUri:
-        default: LSF 10.1 Linux base distribution package
+        default: LSF 10.1 Linux base distribution package(x86)
       CustomerLSFBinsArchUri:
-        default: LSF 10.1 Linux base distribution package for ARM architecture
+        default: LSF 10.1 Linux base distribution package(arm64)
       CustomerLSFEntitlementUri:
         default: LSF 10.1 entitlement file
       CustomerLSFFixPackUri:
-        default: LSF 10.1 Fix Pack
+        default: LSF 10.1 Fix Pack(x86)
       CustomerLSFFixPackArchUri:
-        default: LSF 10.1 Fix Pack for ARM architecture
+        default: LSF 10.1 Fix Pack(arm64)
       LoginServerInstanceType:
         default: Login server instance type
       LoginServerAMI:
@@ -209,7 +209,7 @@ Parameters:
   ProjectDir:
     Description: The name for the project design data subdirectory
     Type: String
-    Default: proj
+    Default: eda_tools
     AllowedPattern: ^.+
 
   SshSource:

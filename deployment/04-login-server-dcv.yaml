@@ -244,44 +244,44 @@ Resources:
                 #!/bin/bash
                 export NFSENDPOINT=$(aws fsx describe-storage-virtual-machines --storage-virtual-machine-ids ${OnPremSvmId} --query StorageVirtualMachines[].Endpoints.Nfs.DNSName --output text)
                 cd /
-                mkdir /eda_tools
-                mkdir /scratch
-                sudo mount -t nfs \$NFSENDPOINT:/vol1_onprem /eda_tools
-                sudo mount -t nfs \$NFSENDPOINT:/scratch_cached /scratch
-                sudo chmod 777 /scratch
-                echo "\$NFSENDPOINT:/vol1_onprem /eda_tools nfs nfsvers=3,defaults 0 0" >> /etc/fstab
-                echo "\$NFSENDPOINT:/scratch_cached /scratch nfs nfsvers=3,defaults 0 0" >> /etc/fstab 
-                cd /eda_tools
+                mkdir /${ProjectDir}
+                mkdir /${ScratchDir}
+                sudo mount -t nfs \$NFSENDPOINT:/vol1_onprem /${ProjectDir}
+                sudo mount -t nfs \$NFSENDPOINT:/scratch_cached /${ScratchDir}
+                sudo chmod 777 /${ScratchDir}
+                echo "\$NFSENDPOINT:/vol1_onprem /${ProjectDir} nfs nfsvers=3,defaults 0 0" >> /etc/fstab
+                echo "\$NFSENDPOINT:/scratch_cached /${ScratchDir} nfs nfsvers=3,defaults 0 0" >> /etc/fstab 
+                cd /${ProjectDir}
                 wget https://www.python.org/ftp/python/3.8.4/Python-3.8.4.tgz
                 mkdir PDK
                 git clone --depth 1 https://github.com/The-OpenROAD-Project/OpenLane.git
                 cd Openlane
-                sed -i 's/$(HOME)\/.volare/\/eda_tools\/PDK\/.volare/' Makefile
+                sed -i 's/$(HOME)\/.volare/\/${ProjectDir}\/PDK\/.volare/' Makefile
                 yum install gcc-c++
                 yum install devtoolset-8-gcc devtoolset-8-gcc-c++
                 Python3 ./env.py local-install
                 make
                 sudo systemctl start docker
                 sudo groupadd docker
-                sudo usermod -aG docker simuser
-                aws s3 cp s3://${SourceS3Bucket}/eda-workshop-cloud-scale/assets/demo_script.sh /eda_tools/
-                chmod 755 /eda_tools/demo_script.sh
+                sudo usermod -aG docker ${DCVUserName}
+                aws s3 cp s3://${SourceS3Bucket}/eda-workshop-cloud-scale/assets/demo_script.sh /${ProjectDir}/
+                chmod 755 /${ProjectDir}/demo_script.sh
               EOF
               else
                 cat << EOF >> /tmp/fsx-setup.sh
                 #!/bin/bash
                 export CloudNFSENDPOINT=$(aws fsx describe-storage-virtual-machines --storage-virtual-machine-ids ${CloudSvmId} --query StorageVirtualMachines[].Endpoints.Nfs.DNSName --output text) 
                 cd /
-                mkdir /eda_tools
-                mkdir /scratch
-                sudo mount -t nfs \$CloudNFSENDPOINT:/tool_cached /eda_tools
-                sudo mount -t nfs \$CloudNFSENDPOINT:/vol1_cloud /scratch
-                sudo chmod 777 /scratch
-                echo "\$CloudNFSENDPOINT:/tool_cached /eda_tools nfs nfsvers=3,defaults 0 0" >> /etc/fstab
-                echo "\$CloudNFSENDPOINT:/vol1_cloud /scratch nfs nfsvers=3,defaults 0 0" >> /etc/fstab 
+                mkdir /${ProjectDir}
+                mkdir /${ScratchDir}
+                sudo mount -t nfs \$CloudNFSENDPOINT:/tool_cached /${ProjectDir}
+                sudo mount -t nfs \$CloudNFSENDPOINT:/vol1_cloud /${ScratchDir}
+                sudo chmod 777 /${ScratchDir}
+                echo "\$CloudNFSENDPOINT:/tool_cached /${ProjectDir} nfs nfsvers=3,defaults 0 0" >> /etc/fstab
+                echo "\$CloudNFSENDPOINT:/vol1_cloud /${ScratchDir} nfs nfsvers=3,defaults 0 0" >> /etc/fstab 
                 sudo systemctl start docker
                 sudo groupadd docker
-                sudo usermod -aG docker simuser
+                sudo usermod -aG docker ${DCVUserName}
               EOF
               fi
 
@@ -414,8 +414,8 @@ Resources:
 
               systemctl enable dcvserver
               echo "false" > /tmp/wait-handle-sent
-              stop_disable_svc firewalld
-              stop_disable_svc libvirtd
+              #stop_disable_svc firewalld
+              #stop_disable_svc libvirtd
               echo "*** END LOGIN SERVER BOOTSTRAP. REBOOTING... ***"
               reboot
 

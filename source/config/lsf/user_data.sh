@@ -51,8 +51,8 @@ mount -t nfs4 -o nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=
 
 
 if [[ $LSF_CLUSTER_NAME == *"Region-A"* ]]; then
-  FLEXCACHE_MOUNTPOINT="/scratch"
-  ORIGIN_VOLUME_MOUNTPOINT='/eda_tools'
+  FLEXCACHE_MOUNTPOINT=/${SCRATCH_DIR}
+  ORIGIN_VOLUME_MOUNTPOINT=/${PROJ_DIR}
   FLEXCACHE_VOLNAME="scratch_cached"
   ORIGIN_VOLNAME="vol1_onprem"
   # Mount Origin
@@ -62,8 +62,8 @@ if [[ $LSF_CLUSTER_NAME == *"Region-A"* ]]; then
    mkdir ${FLEXCACHE_MOUNTPOINT}
    mount -t nfs ${ONTAP_HOST_NAME}:/${FLEXCACHE_VOLNAME} ${FLEXCACHE_MOUNTPOINT}
 else
-   FLEXCACHE_MOUNTPOINT="/eda_tools"
-   ORIGIN_VOLUME_MOUNTPOINT='/scratch'
+   FLEXCACHE_MOUNTPOINT=/${PROJ_DIR}
+   ORIGIN_VOLUME_MOUNTPOINT=/${SCRATCH_DIR}
    FLEXCACHE_VOLNAME="tool_cached"
    ORIGIN_VOLNAME="vol1_cloud"
    # Mount Origin
@@ -89,7 +89,7 @@ sudo systemctl start docker
 
 ## Add "simuser" as docker group to run docker without root
 sudo groupadd docker
-sudo usermod -aG docker simuser
+sudo usermod -aG docker ${DCV_USER_NAME}
 
 ## Set up the LSF environment
 # if [[ $ARCH == "aarch64" ]]; then

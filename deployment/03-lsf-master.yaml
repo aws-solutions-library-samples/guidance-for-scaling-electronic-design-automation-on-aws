@@ -299,12 +299,12 @@ Resources:
                 #!/bin/bash
                 export NFSENDPOINT=$(aws fsx describe-storage-virtual-machines --storage-virtual-machine-ids ${OnPremSvmId} --query StorageVirtualMachines[].Endpoints.Nfs.DNSName --output text)
                 cd /
-                mkdir /eda_tools
-                mkdir /scratch
-                sudo mount -t nfs \$NFSENDPOINT:/vol1_onprem /eda_tools
-                sudo mount -t nfs \$NFSENDPOINT:/scratch_cached /scratch
-                echo "\$NFSENDPOINT:/vol1_onprem /eda_tools nfs nfsvers=3,defaults 0 0" >> /etc/fstab
-                echo "\$NFSENDPOINT:/scratch_cached /scratch nfs nfsvers=3,defaults 0 0" >> /etc/fstab 
+                mkdir /${ProjectDir}
+                mkdir /${ScratchDir}
+                sudo mount -t nfs \$NFSENDPOINT:/vol1_onprem /${ProjectDir}
+                sudo mount -t nfs \$NFSENDPOINT:/scratch_cached /${ScratchDir}
+                echo "\$NFSENDPOINT:/vol1_onprem /${ProjectDir} nfs nfsvers=3,defaults 0 0" >> /etc/fstab
+                echo "\$NFSENDPOINT:/scratch_cached /${ScratchDir} nfs nfsvers=3,defaults 0 0" >> /etc/fstab 
               EOF
               else
                 export NFSENDPOINT=$(aws fsx describe-storage-virtual-machines --storage-virtual-machine-ids ${OnPremSvmId} --query StorageVirtualMachines[].Endpoints.Nfs.IpAddresses --output text)
@@ -313,12 +313,12 @@ Resources:
                 #!/bin/bash
                 export CloudNFSENDPOINT=$(aws fsx describe-storage-virtual-machines --storage-virtual-machine-ids ${CloudSvmId} --query StorageVirtualMachines[].Endpoints.Nfs.DNSName --output text) 
                 cd /
-                mkdir /eda_tools
-                mkdir /scratch
-                sudo mount -t nfs \$CloudNFSENDPOINT:/tool_cached /eda_tools
-                sudo mount -t nfs \$CloudNFSENDPOINT:/vol1_cloud /scratch
-                echo "\$CloudNFSENDPOINT:/tool_cached /eda_tools nfs nfsvers=3,defaults 0 0" >> /etc/fstab
-                echo "\$CloudNFSENDPOINT:/vol1_cloud /scratch nfs nfsvers=3,defaults 0 0" >> /etc/fstab 
+                mkdir /${ProjectDir}
+                mkdir /${ScratchDir}
+                sudo mount -t nfs \$CloudNFSENDPOINT:/tool_cached /${ProjectDir}
+                sudo mount -t nfs \$CloudNFSENDPOINT:/vol1_cloud /${ScratchDir}
+                echo "\$CloudNFSENDPOINT:/tool_cached /${ProjectDir} nfs nfsvers=3,defaults 0 0" >> /etc/fstab
+                echo "\$CloudNFSENDPOINT:/vol1_cloud /${ScratchDir} nfs nfsvers=3,defaults 0 0" >> /etc/fstab 
               EOF
               fi
 
