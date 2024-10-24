@@ -2,7 +2,7 @@
 AWSTemplateFormatVersion: 2010-09-09
 Description: |
   Deploys a full EDA computing infrastructure that includes a new VPC, login server with
-  remote desktop, LSF master, EFS file system, and a shared NFS file system.
+  remote desktop, LSF master, EFS file system, and a shared NFS file system.(SO9496)
   
   This root stack launches a nested stack for each infrastructure component.
   
