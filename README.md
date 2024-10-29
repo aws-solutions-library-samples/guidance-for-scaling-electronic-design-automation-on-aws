@@ -44,7 +44,7 @@ The following is required to run this guidance.
 
 1. License/Full Linux(x86 and aarch64) distribution packages for IBM Spectrum LSF 10.1
 2. NICE DCV Remote Desktop Client(Optional) 
-2. A free subscription to the [Official CentOS 7 x86_64 HVM AMI](https://aws.amazon.com/marketplace/pp/B00O7WM7QW)
+2. A free subscription to the [Official CentOS 7 x86_64 HVM AMI](https://aws.amazon.com/marketplace/pp/prodview-foff247vr2zfw)
 3. Amazon EC2 Key Pair
 
 #### 1. Obtain IBM Spectrum LSF Software
@@ -61,7 +61,7 @@ The Official CentOS 7 x86_64 HVM image that has been built with a minimal profil
 
 Sign in to your AWS account, and follow these instructions to subscribe:
 
-1. Open the page for the [CentOS 7 (x86_64) - with Updates HVM AMI](https://aws.amazon.com/marketplace/pp/B00O7WM7QW) in AWS Marketplace, and then choose Purchase options.
+1. Open the page for the [CentOS 7 (x86_64) - with Updates HVM AMI](https://aws.amazon.com/marketplace/pp/prodview-foff247vr2zfw) in AWS Marketplace, and then choose Purchase options.
 2. Review the terms and conditions for software usage, and then choose Accept Terms. You will get a confirmation page, and an email confirmation will be sent to the account owner. For detailed subscription instructions, see the [AWS Marketplace documentation](https://aws.amazon.com/marketplace/help/200799470).
 3. When the subscription process is complete, exit out of AWS Marketplace without further action. Do not click Continue to Launch; the workshop CloudFormation templates will deploy the AMI for you.
 4. Verify the subscriptions in the [Marketplace dashboard](https://console.aws.amazon.com/marketplace/home) within the AWS Console.
@@ -72,7 +72,7 @@ Sign in to your AWS account, and follow these instructions to subscribe:
 Make sure that at least one Amazon EC2 key pair exists in your AWS account in the region where you are planning to deploy the tutorial. Make note of the key pair name. You’ll be prompted for this information during deployment. To create a key pair, follow the instructions in the AWS documentation. If you’re deploying the tutorial for testing or proof-of-concept purposes, we recommend that you create a new key pair instead of specifying a key pair that’s already being used by a production instance.
 
 ### Operating System 
-This guidance based on two Linux systems(CentOS 7 and Amazon Linux 2)for deploying the EDA environment. To use CentOS 7, it requred to susbscribe the CentOS 7 AMI. [Subscription](https://aws.amazon.com/marketplace/pp/B00O7WM7QW)
+This guidance based on two Linux systems(CentOS 7 and Amazon Linux 2)for deploying the EDA environment. To use CentOS 7, it requred to susbscribe the CentOS 7 AMI. [Subscription](https://aws.amazon.com/marketplace/pp/prodview-foff247vr2zfw)
 
 ### Third-party tools
 Download the following packages from IBM:
