@@ -16,6 +16,10 @@ export LSF_INSTALL_DIR_ROOT="/`echo $LSF_INSTALL_DIR | cut -d / -f2`"
 export LSF_ADMIN=lsfadmin
 export ARCH="`uname -p`"
 
+#OS verserion
+. /etc/os-release
+export OS_VERSION=`echo $VERSION_ID | awk -F. '{print $1}'`
+
 # Add the LSF admin account
 useradd -m -u 1500 $LSF_ADMIN
 # Add DCV login user account
@@ -39,10 +43,12 @@ if [[ $ARCH == "x86_64" ]]; then
    done
 fi
 
-# enable NFS for aarch64 AMI
-if [[ $ARCH == "aarch64" ]]; then
-   yum -y install nfs-utils
-   service nfs start
+# enable NFS
+yum -y install nfs-utils #Amazon LUNUX/RHEL
+if [[ $ID == "rhel" && $OS_VERSION == "8" ]]; then
+        sudo service nfs-server start
+else
+        service nfs start
 fi
 
 # mount shared file systems
@@ -75,21 +81,21 @@ else
 fi
 
 ## Set up Python3 environment for OpenLane
-sudo yum install -y python3 python3-pip
-python3 -m pip install --upgrade --no-cache-dir volare
+# sudo yum install -y python3 python3-pip
+# python3 -m pip install --upgrade --no-cache-dir volare
 
 ## Install Git for OpenLane
-sudo yum install -y git
+# sudo yum install -y git
 
 ## Set up Docker environment for OpenLane
-sudo yum install -y yum-utils
-sudo yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
-sudo yum install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-sudo systemctl start docker
+# sudo yum install -y yum-utils
+# sudo yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+# sudo yum install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+# sudo systemctl start docker
 
 ## Add "simuser" as docker group to run docker without root
-sudo groupadd docker
-sudo usermod -aG docker ${DCV_USER_NAME}
+# sudo groupadd docker
+# sudo usermod -aG docker ${DCV_USER_NAME}
 
 ## Set up the LSF environment
 # if [[ $ARCH == "aarch64" ]]; then
@@ -151,6 +157,11 @@ fi
 if [ -n "${ssd}" ]; then
    sed -i "s/\(LSF_LOCAL_RESOURCES=.*\)\"/\1 [resource ${ssd}]\"/" $LSF_ENVDIR/lsf.conf
    echo "Updated LSF_LOCAL_RESOURCES lsf.conf with [resource ${ssd}]"
+fi
+
+# LSF library installation for aarch64 AMI
+if [[ $ARCH == "aarch64" ]]; then
+   yum -y install libnsl
 fi
 
 # Start LSF Daemons

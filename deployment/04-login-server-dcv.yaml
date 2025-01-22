@@ -27,41 +27,50 @@ Metadata:
 Mappings:
   RegionMap:
     us-east-1:  
-      CentOS75: ami-9887c6e7
-      FPGADev15: ami-0a71d776cea7922c1
-      ALinux2: ami-035be7bafff33b6b6
+      #CentOS7: ami-043984dedb185b864 #CentOS Linux 7-prod-eukkzvj25vgkc
+      RHEL7: ami-0c76662758dc1db64 #RHEL-7.9_HVM-20240930-x86_64-0-Hourly2-GP3
+      ALinux2: ami-0ac664bd64e1dcc6b # amzn2-ami-hvm-2.0.20241217.0-x86_64-gp2
+      RHEL8Graviton: ami-03c35673bd29a0491 #RHEL-8.10.0_HVM-20241210-arm64-1622-Hourly2-GP3
     us-east-2:  
-      CentOS75: ami-0f2b4fc905b0bd1f1
-      FPGADev15: ami-0d3e8847d15d9ad72
-      ALinux2: ami-04328208f4f0cf1fe
+      #CentOS7: ami-03619007682d0cd71 #CentOS Linux 7-prod-eukkzvj25vgkc
+      RHEL7: ami-02827739a7f5841d3 #RHEL-7.9_HVM-20240930-x86_64-0-Hourly2-GP3
+      ALinux2:  ami-05175b461d18d94d9 # amzn2-ami-hvm-2.0.20241217.0-x86_64-gp2
+      RHEL8Graviton: ami-03c0afd0004ca62be #RHEL-8.10.0_HVM-20241210-arm64-1622-Hourly2-GP3
     us-west-1:
-      CentOS75: ami-074e2d6769f445be5
-      FPGADev15: ami-06fd3aab7a08e942d
-      ALinux2: ami-0799ad445b5727125
+      #CentOS7: ami-028c66c6fcd906b90 #CentOS Linux 7-prod-eukkzvj25vgkc
+      RHEL7 : ami-000f409b704b55cf4 #RHEL-7.9_HVM-20240930-x86_64-0-Hourly2-GP3
+      ALinux2: ami-0853d0de3297e47e0 # amzn2-ami-hvm-2.0.20241217.0-x86_64-gp2
+      RHEL8Graviton: ami-05635de0534eccde5 #RHEL-8.10.0_HVM-20241210-arm64-1622-Hourly2-GP3
     us-west-2:
-      CentOS75: ami-3ecc8f46
-      FPGADev15: ami-068ef4610de0dfb70
-      ALinux2: ami-032509850cf9ee54e
+      #CentOS7: ami-0f510d22242ca183f #CentOS Linux 7-prod-eukkzvj25vgkc
+      RHEL7: ami-0b43febdef0c3d1c3 #RHEL-7.9_HVM-20240930-x86_64-0-Hourly2-GP3
+      ALinux2: ami-06c7fbd87fa7b507c # amzn2-ami-hvm-2.0.20241217.0-x86_64-gp2
+      RHEL8Graviton: ami-094dbeb0b4beeecfa #RHEL-8.10.0_HVM-20241210-arm64-1622-Hourly2-GP3
     eu-west-1:           # Dublin
-      CentOS75: ami-3548444c
-      FPGADev15: ami-0521b6e4d86dad1f1
-      ALinux2: ami-0fad7378adf284ce0
+      #CentOS7: ami-0dd3fd68601b3de7f #CentOS Linux 7-prod-eukkzvj25vgkc
+      RHEL7: ami-00d8c24eeb5fbfd8c #RHEL-7.9_HVM-20240930-x86_64-0-Hourly2-GP3
+      ALinux2: ami-0fc56b47fc1f238ee # amzn2-ami-hvm-2.0.20241217.0-x86_64-gp2
+      RHEL8Graviton: ami-0863b2d3611e5acaf #RHEL-8.10.0_HVM-20241210-arm64-1622-Hourly2-GP3
     ap-southeast-1:      # Singapore
-      CentOS75: ami-8e0205f2
-      FPGADev15: ami-0c4b3ff18b42e34a8
-      ALinux2: ami-04677bdaa3c2b6e24
+      #CentOS7: ami-0d130eab12d1ea78a #CentOS Linux 7-prod-eukkzvj25vgkc
+      RHEL7: ami-000f0ee2950b75cd5 #RHEL-7.9_HVM-20240930-x86_64-0-Hourly2-GP3
+      ALinux2: ami-047d5a3391704b8b2 # amzn2-ami-hvm-2.0.20241217.0-x86_64-gp2
+      RHEL8Graviton: ami-0d8e10634fd2cc82c #RHEL-8.10.0_HVM-20241210-arm64-1622-Hourly2-GP3
     ap-southeast-2:      # Sydney
-      CentOS75: ami-d8c21dba
-      FPGADev15: ami-000e49a33676e256a
-      ALinux2: ami-0c9d48b5db609ad6e
+      #CentOS7: ami-075e6c9f6f3ac3804 #CentOS Linux 7-prod-eukkzvj25vgkc
+      RHEL7: ami-090e5f68ce5a80ae4 #RHEL-7.9_HVM-20240930-x86_64-0-Hourly2-GP3
+      ALinux2: ami-0c372b59cfa8c3d65 # amzn2-ami-hvm-2.0.20241217.0-x86_64-gp2
+      RHEL8Graviton: ami-00ef1ac63f85f6d35 #RHEL-8.10.0_HVM-20241210-arm64-1622-Hourly2-GP3
     ap-northeast-2:      # Seoul
-      CentOS75: ami-06cf2a72dadf92410
-      FPGADev15: ami-0bbca7ce2aa871d41
-      ALinux2: ami-018a9a930060d38aa
+      #CentOS7: ami-00609ecc32132c692 #CentOS Linux 7-prod-eukkzvj25vgkc
+      RHEL7: ami-00a8dd1293ad66f06 #RHEL-7.9_HVM-20240930-x86_64-0-Hourly2-GP3
+      ALinux2: ami-07a2318163330ee84 # amzn2-ami-hvm-2.0.20241217.0-x86_64-gp2
+      RHEL8Graviton: ami-0be1f4444522e087d #RHEL-8.10.0_HVM-20241210-arm64-1622-Hourly2-GP3
     ap-northeast-1:      # Tokyo
-      CentOS75: ami-045f38c93733dd48d
-      FPGADev15: ami-0f741966c7ef2c378
-      ALinux2: ami-0d7ed3ddb85b521a6
+      #CentOS7: ami-0d2241a860961c70e #CentOS Linux 7-prod-eukkzvj25vgkc
+      RHEL7: ami-029993f94b02017d3 #RHEL-7.9_HVM-20240930-x86_64-0-Hourly2-GP3
+      ALinux2: ami-0dbca050974482176 # amzn2-ami-hvm-2.0.20241217.0-x86_64-gp2
+      RHEL8Graviton: ami-04dbe9d488cc45455 #RHEL-8.10.0_HVM-20241210-arm64-1622-Hourly2-GP3
 
 Parameters:
   AdminKeyPair:
@@ -86,8 +95,7 @@ Parameters:
     Default: ALinux2
     AllowedValues:
       - ALinux2
-      - CentOS75
-      - FPGADev15
+      #- CentOS7
   LSFClusterName:
     Default: LSFCluster
     Description: An environment name that will be prefixed to resource names
